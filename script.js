@@ -27,16 +27,19 @@ const CONFIG = {
   maxRD: 350,
   drawProbability: 0.08,
   epsilon: 0.000001,
+  validationShortlist: 36,
+  stabilityPenaltyWeight: 0.25,
 
   // Accuracy guardrails against the baseline.
   maxBrierDegradation: 0.002,
   maxLogLossDegradation: 0.002,
 
+  // Rating swing is reported as a diagnostic, not penalised blindly:
+  // large rating changes can be correct when real skill changes.
   weights: {
-    brier: 0.50,
-    logLoss: 0.30,
-    rankError: 0.15,
-    ratingSwing: 0.05
+    brier: 0.45,
+    logLoss: 0.35,
+    rankError: 0.20
   },
 
   // Broad sweep: 11 initial-RD values × 8 volatility values × 12 tau values
@@ -547,15 +550,21 @@ function calculateObjective(result, baseline) {
   const ratio = (value, reference) =>
     value / Math.max(reference, 1e-12);
 
+  // Flooring both sides makes the baseline objective exactly 1.0 even when
+  // baseline rank error is nearly zero. Previously only the denominator was
+  // floored, so the baseline could accidentally score below 1.0.
+  const rankFloor = 0.02;
+
   return (
     CONFIG.weights.brier *
       ratio(result.brier, baseline.brier) +
     CONFIG.weights.logLoss *
       ratio(result.logLoss, baseline.logLoss) +
     CONFIG.weights.rankError *
-      ratio(result.rankError, Math.max(baseline.rankError, 0.02)) +
-    CONFIG.weights.ratingSwing *
-      ratio(result.ratingSwing, Math.max(baseline.ratingSwing, 1))
+      ratio(
+        Math.max(result.rankError, rankFloor),
+        Math.max(baseline.rankError, rankFloor)
+      )
   );
 }
 
@@ -568,6 +577,78 @@ function passesGuardrails(result, baseline) {
   );
 }
 
+function averageMetricResults(params, perSeedResults) {
+  const mean = key => perSeedResults.reduce(
+    (sum, result) => sum + result[key], 0
+  ) / Math.max(1, perSeedResults.length);
+
+  const rankError = mean("rankError");
+
+  return {
+    ...params,
+    brier: mean("brier"),
+    logLoss: mean("logLoss"),
+    rankError,
+    rankCorrelation: 1 - rankError,
+    ratingSwing: mean("ratingSwing"),
+    meanVolatilityChange: mean("meanVolatilityChange"),
+    finalVolatility: mean("finalVolatility")
+  };
+}
+
+function standardDeviation(values) {
+  if (values.length < 2) return 0;
+  const mean = values.reduce((sum, value) => sum + value, 0) / values.length;
+  const variance = values.reduce(
+    (sum, value) => sum + (value - mean) ** 2, 0
+  ) / (values.length - 1);
+  return Math.sqrt(variance);
+}
+
+function buildValidationShortlist(results, baseline) {
+  const eligible = results.filter(result =>
+    !isBaseline(result) && passesGuardrails(result, baseline)
+  );
+  const selected = [];
+  const seen = new Set();
+
+  const keyOf = result =>
+    `${result.rd}|${result.volatility}|${result.tau}`;
+
+  const add = (list, limit) => {
+    let added = 0;
+    for (const result of list) {
+      const key = keyOf(result);
+      if (seen.has(key)) continue;
+      selected.push(result);
+      seen.add(key);
+      added++;
+      if (added >= limit || selected.length >= CONFIG.validationShortlist) break;
+    }
+  };
+
+  add(eligible.slice().sort((a, b) => a.objective - b.objective), 16);
+  add(eligible.slice().sort((a, b) => a.brier - b.brier), 4);
+  add(eligible.slice().sort((a, b) => a.logLoss - b.logLoss), 4);
+  add(eligible.slice().sort((a, b) => b.rankCorrelation - a.rankCorrelation), 4);
+
+  // Include strong candidates from different RD/volatility regions rather
+  // than spending every holdout test on near-duplicate parameter settings.
+  const groups = new Map();
+  for (const result of eligible) {
+    const key = `${result.rd}|${result.volatility}`;
+    if (!groups.has(key) || result.objective < groups.get(key).objective) {
+      groups.set(key, result);
+    }
+  }
+  add(
+    [...groups.values()].sort((a, b) => a.objective - b.objective),
+    8
+  );
+
+  return selected.slice(0, CONFIG.validationShortlist);
+}
+
 function getSettings() {
   const read = (id, fallback, min, max) => {
     const value = Number($(id)?.value);
@@ -577,7 +658,7 @@ function getSettings() {
   };
 
   return {
-    seeds: read("seeds", 10, 1, 500),
+    seeds: read("seeds", 8, 1, 500),
     seasons: read("seasons", 8, 1, 100),
     teams: Math.max(4, read("teams", 16, 4, 100)),
     matches: read("matches", 8, 1, 100)
@@ -622,27 +703,57 @@ function renderResults(results, baseline) {
   const body = $("resultsBody");
   if (!body) return;
 
-  const ordered = results.slice().sort((a, b) => {
-    const aEligible = passesGuardrails(a, baseline);
-    const bEligible = passesGuardrails(b, baseline);
+  const orderRank = result => {
+    if (result.validationPassed) return 0;
+    if (isBaseline(result)) return 1;
+    if (result.validationChecked) return 2;
+    if (passesGuardrails(result, baseline)) return 3;
+    return 4;
+  };
 
-    if (aEligible !== bEligible) return aEligible ? -1 : 1;
+  const ordered = results.slice().sort((a, b) => {
+    const stateDifference = orderRank(a) - orderRank(b);
+    if (stateDifference !== 0) return stateDifference;
+
+    if (a.validationPassed && b.validationPassed) {
+      return a.validationRiskAdjustedObjective - b.validationRiskAdjustedObjective;
+    }
+    if (a.validationChecked && b.validationChecked) {
+      return a.validationRiskAdjustedObjective - b.validationRiskAdjustedObjective;
+    }
     return a.objective - b.objective;
   });
 
   const limit = clamp(Number($("rowLimit")?.value) || 25, 1, 2000);
-
   body.innerHTML = "";
 
   for (const result of ordered.slice(0, limit)) {
     const tr = document.createElement("tr");
-    const eligible = passesGuardrails(result, baseline);
     const baselineRow = isBaseline(result);
-
     if (baselineRow) tr.classList.add("baseline-row");
 
+    let statusLabel = "Guardrail failed";
+    if (baselineRow) statusLabel = "BASELINE";
+    else if (result.validationPassed) statusLabel = "ROBUST PASS";
+    else if (result.validationChecked) {
+      statusLabel = result.validationGuardrailPass ? "Holdout inconclusive" : "Holdout failed";
+    } else if (passesGuardrails(result, baseline)) {
+      statusLabel = "Screened";
+    }
+
+    const validationCell = (key, digits) =>
+      result.validationChecked ? fmt(result[key], digits) : "—";
+    const winsCell = result.validationChecked
+      ? (baselineRow
+          ? `Baseline (${result.validationSeedCount} seeds)`
+          : `${result.validationSeedWins}/${result.validationSeedCount} (${fmt(result.validationWinRate * 100, 0)}%)`)
+      : "—";
+    const objectiveValue = result.validationChecked
+      ? result.validationRiskAdjustedObjective
+      : result.objective;
+
     const cells = [
-      baselineRow ? "BASELINE" : (eligible ? "Eligible" : "Guardrail failed"),
+      statusLabel,
       result.rd,
       result.volatility.toFixed(3),
       result.tau.toFixed(2),
@@ -651,7 +762,11 @@ function renderResults(results, baseline) {
       fmt(result.rankCorrelation, 4),
       fmt(result.ratingSwing, 3),
       fmt(result.meanVolatilityChange, 7),
-      fmt(result.objective, 5)
+      validationCell("validationBrier", 6),
+      validationCell("validationLogLoss", 6),
+      validationCell("validationRankCorrelation", 4),
+      winsCell,
+      fmt(objectiveValue, 5)
     ];
 
     for (const value of cells) {
@@ -659,49 +774,43 @@ function renderResults(results, baseline) {
       td.textContent = String(value);
       tr.appendChild(td);
     }
-
     body.appendChild(tr);
   }
 }
 
-function renderSummary(results, baseline) {
-  const eligible = results
-    .filter(result => passesGuardrails(result, baseline))
-    .sort((a, b) => a.objective - b.objective);
+function renderSummary(results, baseline, baselineValidation, validationSeedCount) {
+  const baselineResult = results.find(isBaseline) || { ...BASELINE };
+  const testedFinalists = results.filter(result => result.validationChecked);
+  const guardrailFinalists = testedFinalists.filter(result => result.validationGuardrailPass);
+  const robustWinners = results
+    .filter(result => !isBaseline(result) && result.validationPassed)
+    .sort((a, b) =>
+      a.validationRiskAdjustedObjective - b.validationRiskAdjustedObjective
+    );
 
-  // Only recommend a non-baseline candidate when it actually improves
-  // the composite objective. Passing accuracy guardrails alone is not enough.
-  const baselineResult = results.find(isBaseline) || baseline;
-  const bestAlternative = eligible
-    .filter(result => !isBaseline(result))
-    .sort((a, b) => a.objective - b.objective)[0];
-  const best = bestAlternative &&
-    bestAlternative.objective < baselineResult.objective - 1e-12
-      ? bestAlternative
-      : baselineResult;
-
-  // These cards report their named metric, not the composite-objective winner.
-  const bestBrierResult = eligible
+  const best = robustWinners[0] || baselineResult;
+  const bestBrierResult = guardrailFinalists
     .slice()
-    .sort((a, b) => a.brier - b.brier)[0] || baselineResult;
-  const bestRankResult = eligible
+    .sort((a, b) => a.validationBrier - b.validationBrier)[0] || baselineResult;
+  const bestRankResult = guardrailFinalists
     .slice()
-    .sort((a, b) => b.rankCorrelation - a.rankCorrelation)[0] || baselineResult;
+    .sort((a, b) => b.validationRankCorrelation - a.validationRankCorrelation)[0] || baselineResult;
 
   if ($("candidateCount")) {
     $("candidateCount").textContent = String(results.length);
   }
-
   if ($("bestBrier")) {
-    $("bestBrier").textContent = fmt(bestBrierResult.brier, 6);
+    $("bestBrier").textContent = fmt(
+      bestBrierResult.validationBrier ?? baselineValidation.brier, 6
+    );
   }
-
   if ($("bestRank")) {
-    $("bestRank").textContent = fmt(bestRankResult.rankCorrelation, 4);
+    $("bestRank").textContent = fmt(
+      bestRankResult.validationRankCorrelation ?? baselineValidation.rankCorrelation, 4
+    );
   }
-
   if ($("baselineBrier")) {
-    $("baselineBrier").textContent = fmt(baseline.brier, 6);
+    $("baselineBrier").textContent = fmt(baselineValidation.brier, 6);
   }
 
   if ($("bestRD")) $("bestRD").textContent = String(best.rd);
@@ -710,50 +819,56 @@ function renderSummary(results, baseline) {
   }
   if ($("bestTau")) $("bestTau").textContent = best.tau.toFixed(2);
   if ($("bestObjective")) {
-    $("bestObjective").textContent = fmt(best.objective, 5);
+    $("bestObjective").textContent = fmt(
+      best.validationChecked ? best.validationRiskAdjustedObjective : 1, 5
+    );
   }
 
-  const status = $("verdict");
-
-  if (status) {
+  if ($("verdict")) {
     if (isBaseline(best)) {
-      status.textContent =
-        "Keep the baseline. No non-baseline candidate passed the accuracy guardrails and improved the objective.";
+      $("verdict").textContent =
+        "No finalist beat the baseline reliably on independent holdout competitions. Keep the baseline parameters.";
     } else {
-      status.textContent =
-        `Candidate ${best.rd} / ${best.volatility.toFixed(3)} / ${best.tau.toFixed(2)} passed the accuracy guardrails and scored best among eligible candidates. Validate on real historical matches before adopting it.`;
+      $("verdict").textContent =
+        `Candidate ${best.rd} / ${best.volatility.toFixed(3)} / ${best.tau.toFixed(2)} passed holdout accuracy guardrails, beat the baseline objective on ${best.validationSeedWins}/${validationSeedCount} holdout seeds, and achieved a risk-adjusted objective of ${fmt(best.validationRiskAdjustedObjective, 5)}. Validate on historical match data before adoption.`;
     }
   }
 
+  // Report practical tau sensitivity on predictive outcomes, not exact floating-
+  // point equality or tiny movement in the latent volatility variable.
   const tauGroups = new Map();
-
   for (const result of results) {
     const key = `${result.rd}|${result.volatility}`;
     if (!tauGroups.has(key)) tauGroups.set(key, []);
     tauGroups.get(key).push(result);
   }
 
-  let identicalTauGroups = 0;
-
+  let negligibleTauGroups = 0;
   for (const group of tauGroups.values()) {
     if (group.length < 2) continue;
-
-    const first = group[0];
-
-    const identical = group.every(item =>
-      Math.abs(item.brier - first.brier) < 1e-12 &&
-      Math.abs(item.logLoss - first.logLoss) < 1e-12 &&
-      Math.abs(item.ratingSwing - first.ratingSwing) < 1e-12 &&
-      Math.abs(item.meanVolatilityChange - first.meanVolatilityChange) < 1e-12
-    );
-
-    if (identical) identicalTauGroups++;
+    const range = key => {
+      const values = group.map(item => item[key]);
+      return Math.max(...values) - Math.min(...values);
+    };
+    if (
+      range("brier") <= 0.00001 &&
+      range("logLoss") <= 0.00001 &&
+      range("rankCorrelation") <= 0.0005
+    ) {
+      negligibleTauGroups++;
+    }
   }
 
+  const searchEligible = results.filter(result =>
+    passesGuardrails(result, baseline)
+  ).length;
   if ($("status")) {
     $("status").textContent =
-      `Complete. ${eligible.length} of ${results.length} candidates passed accuracy guardrails. ` +
-      `${identicalTauGroups} RD/volatility groups showed no measurable tau sensitivity.`;
+      `Screening: ${searchEligible}/${results.length} candidates passed training-set accuracy guardrails. ` +
+      `Independent holdout: ${testedFinalists.filter(r => !isBaseline(r)).length} finalists tested; ` +
+      `${robustWinners.length} passed the robustness test across ${validationSeedCount} holdout seeds. ` +
+      `${negligibleTauGroups}/${tauGroups.size} RD/volatility groups had negligible predictive sensitivity to tau. ` +
+      `Holdout baseline Brier: ${fmt(baselineValidation.brier, 6)}; log loss: ${fmt(baselineValidation.logLoss, 6)}.`;
   }
 
   renderResults(results, baseline);
@@ -763,19 +878,17 @@ async function runExperiment() {
   if (isRunning) return;
 
   isRunning = true;
-
   const runButton = $("runBtn");
   if (runButton) runButton.disabled = true;
 
-  if ($("status")) $("status").textContent = "Generating common test competitions…";
+  if ($("status")) $("status").textContent = "Generating shared search competitions…";
 
   try {
     const settings = getSettings();
     const candidates = buildCandidates();
-
-    // Generate the test data once. Every candidate sees the same data.
     const competitions = [];
 
+    // The search set is shared by all 1,056 candidates for a fair comparison.
     for (let i = 0; i < settings.seeds; i++) {
       competitions.push(
         generateCompetition(12345 + i * 7919, settings)
@@ -787,42 +900,111 @@ async function runExperiment() {
 
     const results = [];
     const total = candidates.length;
-
     for (let i = 0; i < candidates.length; i++) {
       const candidate = candidates[i];
-      let result;
-
-      if (isBaseline(candidate)) {
-        result = { ...baselineRaw };
-      } else {
-        result = evaluateCandidate(candidate, competitions);
-      }
+      const result = isBaseline(candidate)
+        ? { ...baselineRaw }
+        : evaluateCandidate(candidate, competitions);
 
       result.objective = calculateObjective(result, baselineRaw);
       result.eligible = passesGuardrails(result, baselineRaw);
       results.push(result);
-
       setProgress(i + 1, total);
 
-      // Yield to the browser so the progress UI can repaint.
+      // Keep the page responsive while calculating the large sweep.
       if (i % 2 === 1) {
         await new Promise(resolve => setTimeout(resolve, 0));
       }
     }
 
-    latestResults = results;
+    const shortlist = buildValidationShortlist(results, baselineRaw);
+    const validationSeedCount = Math.max(8, settings.seeds);
+    const holdoutCompetitions = [];
 
-    renderSummary(results, baselineRaw);
+    // Disjoint seed range: these competitions never influence the broad sweep.
+    for (let i = 0; i < validationSeedCount; i++) {
+      holdoutCompetitions.push(
+        generateCompetition(987654321 + i * 104729, settings)
+      );
+    }
 
     if ($("status")) {
-      $("status").textContent +=
-        ` Baseline: Brier ${fmt(baselineRaw.brier, 6)}, ` +
-        `log loss ${fmt(baselineRaw.logLoss, 6)}, ` +
-        `mean volatility change ${fmt(baselineRaw.meanVolatilityChange, 8)}.`;
+      $("status").textContent =
+        `Search complete. Independently validating ${shortlist.length} finalists across ${validationSeedCount} unseen seeds…`;
     }
+
+    const baselineSeedResults = holdoutCompetitions.map(competition =>
+      evaluateCandidate(BASELINE, [competition])
+    );
+    const baselineValidation = averageMetricResults(BASELINE, baselineSeedResults);
+    baselineValidation.objective = 1;
+
+    const baselineResult = results.find(isBaseline);
+    if (baselineResult) {
+      Object.assign(baselineResult, {
+        validationChecked: true,
+        validationGuardrailPass: true,
+        validationPassed: false,
+        validationBrier: baselineValidation.brier,
+        validationLogLoss: baselineValidation.logLoss,
+        validationRankCorrelation: baselineValidation.rankCorrelation,
+        validationObjectiveMean: 1,
+        validationObjectiveStdDev: 0,
+        validationRiskAdjustedObjective: 1,
+        validationWinRate: 0,
+        validationSeedWins: 0,
+        validationSeedCount
+      });
+    }
+
+    for (let i = 0; i < shortlist.length; i++) {
+      const candidate = shortlist[i];
+      const perSeedResults = holdoutCompetitions.map(competition =>
+        evaluateCandidate(candidate, [competition])
+      );
+      const aggregate = averageMetricResults(candidate, perSeedResults);
+      const seedObjectives = perSeedResults.map((seedResult, index) =>
+        calculateObjective(seedResult, baselineSeedResults[index])
+      );
+      const objectiveMean = seedObjectives.reduce((sum, value) => sum + value, 0) /
+        Math.max(1, seedObjectives.length);
+      const objectiveStdDev = standardDeviation(seedObjectives);
+      const riskAdjustedObjective = objectiveMean +
+        CONFIG.stabilityPenaltyWeight * objectiveStdDev;
+      const seedWins = seedObjectives.filter(value => value < 1 - 1e-9).length;
+      const winRate = seedWins / Math.max(1, validationSeedCount);
+      const guardrailPass = passesGuardrails(aggregate, baselineValidation);
+
+      Object.assign(candidate, {
+        validationChecked: true,
+        validationGuardrailPass: guardrailPass,
+        validationObjectiveMean: objectiveMean,
+        validationObjectiveStdDev: objectiveStdDev,
+        validationRiskAdjustedObjective: riskAdjustedObjective,
+        validationBrier: aggregate.brier,
+        validationLogLoss: aggregate.logLoss,
+        validationRankCorrelation: aggregate.rankCorrelation,
+        validationSeedWins: seedWins,
+        validationSeedCount,
+        validationWinRate: winRate,
+        validationPassed:
+          guardrailPass &&
+          seedWins >= Math.ceil(validationSeedCount * 0.5) &&
+          riskAdjustedObjective < 1 - 1e-6
+      });
+
+      if ($("status")) {
+        $("status").textContent =
+          `Independent holdout validation: ${i + 1}/${shortlist.length} finalists; ` +
+          `checking ${candidate.rd} / ${candidate.volatility.toFixed(3)} / ${candidate.tau.toFixed(2)}…`;
+      }
+      await new Promise(resolve => setTimeout(resolve, 0));
+    }
+
+    latestResults = results;
+    renderSummary(results, baselineRaw, baselineValidation, validationSeedCount);
   } catch (error) {
     console.error(error);
-
     if ($("status")) {
       $("status").textContent = `Experiment failed: ${error.message}`;
     }
@@ -838,7 +1020,7 @@ function resetDashboard() {
 
   if ($("resultsBody")) {
     $("resultsBody").innerHTML =
-      '<tr><td colspan="10" class="empty">No results yet. Run the parameter sweep.</td></tr>';
+      '<tr><td colspan="14" class="empty">No results yet. Run the parameter sweep.</td></tr>';
   }
   if ($("candidateCount")) $("candidateCount").textContent = "0";
   if ($("bestBrier")) $("bestBrier").textContent = "—";

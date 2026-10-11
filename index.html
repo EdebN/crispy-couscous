@@ -180,7 +180,7 @@
               <th>Holdout log loss</th>
               <th>Holdout rank corr.</th>
               <th>Seed wins</th>
-              <th>Objective*</th>
+              <th>Objective (robust*)</th>
             </tr>
           </thead>
           <tbody id="resultsBody">
@@ -207,6 +207,7 @@
         <li><strong>Rank correlation:</strong> measures how closely the ladder follows true simulated skill.</li>
         <li><strong>Mean swing:</strong> measures rating movement between periods. Lower is not automatically better.</li>
         <li><strong>Objective:</strong> 45% Brier score, 35% log loss, and 20% ranking error. On finalists, seed-to-seed variation is penalised; rating movement is reported but not blindly minimised.</li>
+        <li><strong>Robust objective:</strong> for holdout-tested finalists, the mean objective is increased by 0.25 × its across-seed standard deviation. The baseline is exactly 1.0. Untested rows show the screening objective.</li>
       </ul>
       <p class="warning">
         Simulation results are not proof of real-world performance.

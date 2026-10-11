@@ -39,9 +39,11 @@ const CONFIG = {
     ratingSwing: 0.05
   },
 
-  rdValues: [50, 100, 150, 200, 250],
-  volatilityValues: [0.02, 0.04, 0.06, 0.08, 0.12],
-  tauValues: [0.1, 0.2, 0.3, 0.5, 0.8, 1.2]
+  // Broad sweep: 11 initial-RD values × 8 volatility values × 12 tau values
+  // = 1,056 combinations, including the unchanged baseline.
+  rdValues: [50, 75, 100, 125, 150, 175, 200, 225, 250, 300, 350],
+  volatilityValues: [0.02, 0.03, 0.04, 0.05, 0.06, 0.08, 0.10, 0.12],
+  tauValues: [0.10, 0.15, 0.20, 0.25, 0.30, 0.40, 0.50, 0.60, 0.80, 1.00, 1.20, 1.50]
 };
 
 const BASELINE = {

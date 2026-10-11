@@ -792,7 +792,22 @@ function renderSummary(results, baseline, baselineValidation, validationSeedCoun
       a.validationRiskAdjustedObjective - b.validationRiskAdjustedObjective
     );
 
-  const best = robustWinners[0] || baselineResult;
+  // The displayed formula is the arithmetic mean of the parameters from
+  // every candidate that passes the search-set accuracy guardrails.
+  // This intentionally reports the average result, not a single noisy winner.
+  const passingResults = results.filter(result =>
+    passesGuardrails(result, baseline)
+  );
+  const formulaPool = passingResults.length ? passingResults : [baselineResult];
+  const meanOf = key =>
+    formulaPool.reduce((sum, result) => sum + result[key], 0) / formulaPool.length;
+  const formula = {
+    rd: meanOf("rd"),
+    volatility: meanOf("volatility"),
+    tau: meanOf("tau"),
+    objective: meanOf("objective")
+  };
+
   const bestBrierResult = guardrailFinalists
     .slice()
     .sort((a, b) => a.validationBrier - b.validationBrier)[0] || baselineResult;
@@ -817,25 +832,18 @@ function renderSummary(results, baseline, baselineValidation, validationSeedCoun
     $("baselineBrier").textContent = fmt(baselineValidation.brier, 6);
   }
 
-  if ($("bestRD")) $("bestRD").textContent = String(best.rd);
+  if ($("bestRD")) $("bestRD").textContent = formula.rd.toFixed(2);
   if ($("bestVolatility")) {
-    $("bestVolatility").textContent = best.volatility.toFixed(3);
+    $("bestVolatility").textContent = formula.volatility.toFixed(4);
   }
-  if ($("bestTau")) $("bestTau").textContent = best.tau.toFixed(2);
+  if ($("bestTau")) $("bestTau").textContent = formula.tau.toFixed(4);
   if ($("bestObjective")) {
-    $("bestObjective").textContent = fmt(
-      best.validationChecked ? best.validationRiskAdjustedObjective : 1, 5
-    );
+    $("bestObjective").textContent = fmt(formula.objective, 5);
   }
 
   if ($("verdict")) {
-    if (isBaseline(best)) {
-      $("verdict").textContent =
-        "No finalist beat the baseline reliably on independent holdout competitions. Keep the baseline parameters.";
-    } else {
-      $("verdict").textContent =
-        `Candidate ${best.rd} / ${best.volatility.toFixed(3)} / ${best.tau.toFixed(2)} passed holdout accuracy guardrails, beat the baseline objective on ${best.validationSeedWins}/${validationSeedCount} holdout seeds, and achieved a risk-adjusted objective of ${fmt(best.validationRiskAdjustedObjective, 5)}. Validate on historical match data before adoption.`;
-    }
+    $("verdict").textContent =
+      `Formula = arithmetic mean of RD, volatility, and tau across ${formulaPool.length} candidates that passed the search accuracy guardrails. Mean parameters: RD ${formula.rd.toFixed(2)}, volatility ${formula.volatility.toFixed(4)}, tau ${formula.tau.toFixed(4)}. This is an averaged formula, not a claim that it outperforms the baseline by a meaningful margin; validate it on historical match data before using it live.`;
   }
 
   // Report practical tau sensitivity on predictive outcomes, not exact floating-

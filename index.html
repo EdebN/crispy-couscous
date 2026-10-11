@@ -24,13 +24,13 @@
       <div class="section-heading">
         <div>
           <h2>Experiment configuration</h2>
-          <p>Search 1,056 combinations across initial RD, volatility, and tau using identical simulated competitions.</p>
+          <p>Screen 1,056 combinations on shared simulations, then test finalists on separate unseen competitions.</p>
         </div>
       </div>
 
       <div class="controls">
         <label>
-          Validation seeds
+          Search seeds
           <select id="seeds">
             <option value="4">4 · Quick test</option>
             <option value="8" selected>8 · Standard</option>
@@ -96,19 +96,19 @@
       </article>
 
       <article class="metric-card">
-        <span class="metric-label">Best Brier score</span>
+        <span class="metric-label">Best holdout Brier</span>
         <strong id="bestBrier">—</strong>
         <span class="metric-note">Lower is better</span>
       </article>
 
       <article class="metric-card">
-        <span class="metric-label">Best rank correlation</span>
+        <span class="metric-label">Best holdout rank</span>
         <strong id="bestRank">—</strong>
         <span class="metric-note">Higher is better</span>
       </article>
 
       <article class="metric-card">
-        <span class="metric-label">Baseline Brier</span>
+        <span class="metric-label">Holdout baseline Brier</span>
         <strong id="baselineBrier">—</strong>
         <span class="metric-note">Reference performance</span>
       </article>
@@ -118,7 +118,7 @@
       <div class="section-heading">
         <div>
           <h2>Best candidate</h2>
-          <p>Lowest composite objective, subject to further validation.</p>
+          <p>Lowest risk-adjusted objective among finalists that pass independent holdout checks.</p>
         </div>
       </div>
 
@@ -150,7 +150,7 @@
       <div class="section-heading">
         <div>
           <h2>Candidate rankings</h2>
-          <p>Compare predictive accuracy, ladder quality, and rating movement.</p>
+          <p>Search-set metrics are diagnostic; holdout metrics decide which candidates survive.</p>
         </div>
         <label class="compact-label">
           Show
@@ -171,17 +171,21 @@
               <th>RD</th>
               <th>Volatility</th>
               <th>Tau</th>
-              <th>Brier</th>
-              <th>Log loss</th>
-              <th>Rank correlation</th>
+              <th>Search Brier</th>
+              <th>Search log loss</th>
+              <th>Search rank corr.</th>
               <th>Rating swing</th>
               <th>Volatility change</th>
-              <th>Objective</th>
+              <th>Holdout Brier</th>
+              <th>Holdout log loss</th>
+              <th>Holdout rank corr.</th>
+              <th>Seed wins</th>
+              <th>Objective*</th>
             </tr>
           </thead>
           <tbody id="resultsBody">
             <tr>
-              <td colspan="10" class="empty">
+              <td colspan="14" class="empty">
                 No results yet. Run the parameter sweep.
               </td>
             </tr>
@@ -202,12 +206,12 @@
         <li><strong>Log loss:</strong> penalises confidently incorrect predictions.</li>
         <li><strong>Rank correlation:</strong> measures how closely the ladder follows true simulated skill.</li>
         <li><strong>Mean swing:</strong> measures rating movement between periods. Lower is not automatically better.</li>
-        <li><strong>Objective:</strong> a weighted comparison score, not a probability or a rating.</li>
+        <li><strong>Objective:</strong> 45% Brier score, 35% log loss, and 20% ranking error. On finalists, seed-to-seed variation is penalised; rating movement is reported but not blindly minimised.</li>
       </ul>
       <p class="warning">
         Simulation results are not proof of real-world performance.
-        Validate the finalists against historical competition results and
-        previously unused random seeds before changing the live system.
+        The broad sweep uses one set of simulations; shortlisted candidates are compared on independent holdout seeds.
+        No simulated result automatically changes the live rating system. Historical match data is still the final test.
       </p>
     </section>
   </main>
@@ -217,6 +221,6 @@
     <span>Baseline parameters remain unchanged</span>
   </footer>
 
-  <script type="module" src="./script.js?v=1056-sweep-1"></script>
+  <script type="module" src="./script.js?v=robust-holdout-2"></script>
 </body>
 </html>

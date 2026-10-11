@@ -667,19 +667,35 @@ function renderSummary(results, baseline) {
     .filter(result => passesGuardrails(result, baseline))
     .sort((a, b) => a.objective - b.objective);
 
-  // Baseline is always a valid fallback.
-  const best = eligible.find(result => !isBaseline(result)) || baseline;
+  // Only recommend a non-baseline candidate when it actually improves
+  // the composite objective. Passing accuracy guardrails alone is not enough.
+  const baselineResult = results.find(isBaseline) || baseline;
+  const bestAlternative = eligible
+    .filter(result => !isBaseline(result))
+    .sort((a, b) => a.objective - b.objective)[0];
+  const best = bestAlternative &&
+    bestAlternative.objective < baselineResult.objective - 1e-12
+      ? bestAlternative
+      : baselineResult;
+
+  // These cards report their named metric, not the composite-objective winner.
+  const bestBrierResult = eligible
+    .slice()
+    .sort((a, b) => a.brier - b.brier)[0] || baselineResult;
+  const bestRankResult = eligible
+    .slice()
+    .sort((a, b) => b.rankCorrelation - a.rankCorrelation)[0] || baselineResult;
 
   if ($("candidateCount")) {
     $("candidateCount").textContent = String(results.length);
   }
 
   if ($("bestBrier")) {
-    $("bestBrier").textContent = fmt(best.brier, 6);
+    $("bestBrier").textContent = fmt(bestBrierResult.brier, 6);
   }
 
   if ($("bestRank")) {
-    $("bestRank").textContent = fmt(best.rankCorrelation, 4);
+    $("bestRank").textContent = fmt(bestRankResult.rankCorrelation, 4);
   }
 
   if ($("baselineBrier")) {
@@ -818,7 +834,10 @@ function resetDashboard() {
   latestResults = [];
   setProgress(0, 0);
 
-  if ($("resultsBody")) $("resultsBody").innerHTML = "";
+  if ($("resultsBody")) {
+    $("resultsBody").innerHTML =
+      '<tr><td colspan="10" class="empty">No results yet. Run the parameter sweep.</td></tr>';
+  }
   if ($("candidateCount")) $("candidateCount").textContent = "0";
   if ($("bestBrier")) $("bestBrier").textContent = "—";
   if ($("bestRank")) $("bestRank").textContent = "—";
@@ -843,17 +862,8 @@ if ($("rowLimit")) {
   $("rowLimit").addEventListener("change", () => {
     if (latestResults.length === 0) return;
 
-    const settings = getSettings();
-    const competitions = [];
-
-    for (let i = 0; i < settings.seeds; i++) {
-      competitions.push(
-        generateCompetition(12345 + i * 7919, settings)
-      );
-    }
-
-    // Re-rendering needs the baseline metrics, so use the saved baseline
-    // result from the current results array.
+    // Re-render the existing results only. Re-generating all simulations
+    // here would waste time and could make the display feel unresponsive.
     const baseline = latestResults.find(isBaseline);
     if (baseline) renderResults(latestResults, baseline);
   });

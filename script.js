@@ -630,7 +630,7 @@ function renderResults(results, baseline) {
     return a.objective - b.objective;
   });
 
-  const limit = clamp(Number($("rowLimit")?.value) || 25, 1, 150);
+  const limit = clamp(Number($("rowLimit")?.value) || 25, 1, 2000);
 
   body.innerHTML = "";
 
@@ -872,5 +872,5 @@ if ($("rowLimit")) {
 }
 
 if ($("status")) {
-  $("status").textContent = "Ready. Run the experiment to compare 150 candidates.";
+  $("status").textContent = "Ready. Run the broad sweep to compare 1,056 parameter combinations.";
 }

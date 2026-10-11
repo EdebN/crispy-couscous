@@ -33,6 +33,7 @@ const CONFIG = {
   // Accuracy guardrails against the baseline.
   maxBrierDegradation: 0.002,
   maxLogLossDegradation: 0.002,
+  maxRankErrorDegradation: 0.02,
 
   // Rating swing is reported as a diagnostic, not penalised blindly:
   // large rating changes can be correct when real skill changes.
@@ -569,11 +570,14 @@ function calculateObjective(result, baseline) {
 }
 
 function passesGuardrails(result, baseline) {
+  const baselineRankError = Math.max(baseline.rankError, 0.02);
   return (
     result.brier <= baseline.brier *
       (1 + CONFIG.maxBrierDegradation) &&
     result.logLoss <= baseline.logLoss *
-      (1 + CONFIG.maxLogLossDegradation)
+      (1 + CONFIG.maxLogLossDegradation) &&
+    result.rankError <= baselineRankError *
+      (1 + CONFIG.maxRankErrorDegradation)
   );
 }
 

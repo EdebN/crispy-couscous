@@ -7,7 +7,7 @@ const CENTER = 1500;
 const SCALE = 173.7178;
 const TAU = 0.5;
 const EPS = 1e-6;
-const BASE_MODEL_NAMES = ["Glicko-2", "Glicko-2 + recent form", "Elo", "Poisson scores", "Points differential", "Home-rate baseline", "Neural network"];
+const BASE_MODEL_NAMES = ["Glicko-2", "Glicko-2 + recent form", "Elo", "Poisson scores", "Dynamic offence/defence", "Points differential", "Home-rate baseline", "Neural network"];
 const CALIBRATED_NAMES = BASE_MODEL_NAMES.map(name => name + " · temperature-calibrated");
 const MODEL_NAMES = [...BASE_MODEL_NAMES, ...CALIBRATED_NAMES];
 const $ = id => document.getElementById(id);
@@ -98,6 +98,31 @@ function makeTeams(data) {
 function freshGlicko() { return { rating: CENTER, rd: 350, sigma: 0.06 }; }
 function freshStats() {
   return { homePF: 0, homePA: 0, homeN: 0, awayPF: 0, awayPA: 0, awayN: 0, neutralMarginSum: 0, marginN: 0 };
+}
+function freshOffenceDefence() { return { offence: 0, defence: 0 }; }
+function updateOffenceDefence(states, period, expectedScores) {
+  const deltas = new Map([...states.keys()].map(team => [team, { offence: 0, defence: 0, games: 0 }]));
+  const rate = 0.018;
+  for (const game of period) {
+    const expected = expectedScores.get([game.season, game.week, game.home, game.away].join("|"));
+    if (!expected) continue;
+    const homeResidual = clamp((game.hs - expected.home) / Math.sqrt(expected.home + 9), -2.5, 2.5);
+    const awayResidual = clamp((game.as - expected.away) / Math.sqrt(expected.away + 9), -2.5, 2.5);
+    const homeDelta = deltas.get(game.home), awayDelta = deltas.get(game.away);
+    homeDelta.offence += rate * homeResidual;
+    homeDelta.defence -= rate * awayResidual;
+    awayDelta.offence += rate * awayResidual;
+    awayDelta.defence -= rate * homeResidual;
+    homeDelta.games++; awayDelta.games++;
+  }
+  for (const [team, delta] of deltas) {
+    if (!delta.games) continue;
+    const old = states.get(team);
+    states.set(team, {
+      offence: clamp(old.offence + delta.offence / Math.sqrt(delta.games), -0.65, 0.65),
+      defence: clamp(old.defence + delta.defence / Math.sqrt(delta.games), -0.65, 0.65)
+    });
+  }
 }
 function recentForm(history) {
   let weighted = 0, weights = 0;
@@ -351,6 +376,7 @@ function runExperiment(data) {
   const glicko = new Map(teams.map(t => [t, freshGlicko()]));
   const elo = new Map(teams.map(t => [t, CENTER]));
   const stats = new Map(teams.map(t => [t, freshStats()]));
+  const offenceDefence = new Map(teams.map(t => [t, freshOffenceDefence()]));
   const recentMargins = new Map(teams.map(t => [t, []]));
   const history = { games: 0, draws: 0, homeWins: 0, awayWins: 0, homeScoreSum: 0, awayScoreSum: 0, homeMarginSum: 0 };
   const records = [];
@@ -362,6 +388,7 @@ function runExperiment(data) {
     if (lastSeason !== null && first.season !== lastSeason) {
       for (const [team, r] of glicko) glicko.set(team, { ...r, rd: Math.min(350, Math.sqrt(r.rd * r.rd + 50 * 50)) });
       for (const [team, r] of elo) elo.set(team, CENTER + 0.95 * (r - CENTER));
+      for (const [team, r] of offenceDefence) offenceDefence.set(team, { offence: r.offence * 0.7, defence: r.defence * 0.7 });
       // Recent form is season-specific; don't carry last year's short-term momentum into a new season.
       for (const team of teams) recentMargins.set(team, []);
     }
@@ -371,6 +398,7 @@ function runExperiment(data) {
     const leagueHomeMean = (history.homeScoreSum + 8 * 22.5) / (history.games + 8);
     const leagueAwayMean = (history.awayScoreSum + 8 * 21.5) / (history.games + 8);
     const homeAdv = history.games ? history.homeMarginSum / history.games : 2.5;
+    const dynamicExpectedScores = new Map();
     for (const game of period) {
       const gh = glicko.get(game.home), ga = glicko.get(game.away);
       const eh = elo.get(game.home), ea = elo.get(game.away);
@@ -382,6 +410,10 @@ function runExperiment(data) {
       const homeDef = (sh.homePA + shrink * leagueAwayMean) / (sh.homeN + shrink);
       const lambdaHome = clamp((homeOff + awayDef) / 2, 3, 50);
       const lambdaAway = clamp((awayOff + homeDef) / 2, 3, 50);
+      const odHome = offenceDefence.get(game.home), odAway = offenceDefence.get(game.away);
+      const dynamicLambdaHome = clamp(leagueHomeMean * Math.exp(odHome.offence - odAway.defence), 3, 50);
+      const dynamicLambdaAway = clamp(leagueAwayMean * Math.exp(odAway.offence - odHome.defence), 3, 50);
+      dynamicExpectedScores.set([game.season, game.week, game.home, game.away].join("|"), { home: dynamicLambdaHome, away: dynamicLambdaAway });
       const homeStrength = sh.marginN ? sh.neutralMarginSum / (sh.marginN + 5) : 0;
       const awayStrength = sa.marginN ? sa.neutralMarginSum / (sa.marginN + 5) : 0;
       const expectedMargin = homeStrength - awayStrength + (Number.isFinite(homeAdv) ? homeAdv : 2.5);
@@ -394,6 +426,7 @@ function runExperiment(data) {
         "Glicko-2 + recent form": recentFormGlickoForecast(gh, ga, dRate, homeForm, awayForm),
         "Elo": eloForecast(eh, ea, dRate),
         "Poisson scores": poissonOutcome(lambdaHome, lambdaAway),
+        "Dynamic offence/defence": poissonOutcome(dynamicLambdaHome, dynamicLambdaAway),
         "Points differential": threeWayFromHomeWin(pMargin, dRate),
         "Home-rate baseline": threeWayFromHomeWin(baselineHome, dRate)
       };
@@ -421,6 +454,7 @@ function runExperiment(data) {
       }
     }
     // Update only after every game in this week has been forecast.
+    updateOffenceDefence(offenceDefence, period, dynamicExpectedScores);
     updateGlickoPeriod(glicko, period);
     const frozenElo = new Map(elo);
     const eloDeltas = new Map(teams.map(t => [t, 0]));

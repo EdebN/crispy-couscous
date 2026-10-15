@@ -74,7 +74,8 @@
         <li><strong>Accuracy:</strong> percentage of correct outcome picks. It does not measure probability calibration.</li>
         <li><strong>Recent form:</strong> the form-adjusted Glicko model uses each team’s latest 12 neutralised scoring margins, with older games down-weighted and short histories shrunk toward zero. Its adjustment is capped to prevent a few unusual scores from overpowering the rating.</li>
         <li><strong>Poisson caveat:</strong> NFL scoring is discrete and shaped by touchdowns, field goals, and conversions. The Poisson model is a useful benchmark, not an assumption that football scores literally follow a Poisson process.</li>
-        <li><strong>No tuning on the test set:</strong> model settings are fixed in advance. Results are evidence for these seasons and methods, not a guarantee about future games.</li>
+        <li><strong>Probability calibration experiment:</strong> each base model also gets a temperature-scaled variant. A single temperature is selected by minimising multiclass log loss on validation predictions only, then frozen and evaluated on the final test window. Calibrated variants show blank validation scores because those same validation outcomes fitted the temperature; presenting them as independent validation results would be misleading.</li>
+        <li><strong>No test leakage:</strong> final-test outcomes are not used to fit temperatures or alter model settings. Results are evidence for these seasons and methods, not a guarantee about future games.</li>
       </ul>
       <p class="source-line">Data: <a href="https://github.com/nflverse/nfldata" target="_blank" rel="noreferrer">nflverse/nfldata</a> · <a href="https://github.com/nflverse/nflverse-data" target="_blank" rel="noreferrer">nflverse data releases</a></p>
     </section>

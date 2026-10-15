@@ -195,8 +195,8 @@
     </section>
 
     <section class="panel" id="historicalNFL">
-      <div class="section-heading"><div><h2>Historical NFL backtest</h2><p>Replay real regular-season results chronologically. Each week's predictions are scored before that week's ratings are updated.</p></div><span class="status" id="nflStatus">READY</span></div>
-      <p id="nflMeta" class="subtitle">Historical data loads from nflverse when you run the test. Upload a CSV to test another sport or competition.</p>
+      <div class="section-heading"><div><h2>Historical match backtest</h2><p>Replay real match results chronologically. Each period's predictions are scored before that period's ratings are updated.</p></div><span class="status" id="nflStatus">READY</span></div>
+      <p id="nflMeta" class="subtitle">NFL data loads by default. Upload a CSV to test another sport or competition.</p>
       <div class="upload-row"><label for="customDataFile">Use another league or competition (CSV)<input id="customDataFile" type="file" accept=".csv,text/csv"></label><p class="upload-help">Required columns: home_team, away_team, home_score, away_score. Optional: season, week, date, game_type. Include at least 100 completed matches across five or more seasons for a useful tune/test split.</p></div>
       <div class="button-row"><button id="runNFLBtn" class="primary">Run historical backtest</button></div>
       <div class="table-wrap"><table><thead><tr><th>Model</th><th>Brier (lower better)</th><th>Log loss (lower better)</th><th>Outcome accuracy</th><th>Games</th></tr></thead><tbody id="nflResultsBody"><tr><td colspan="5" class="empty">No results yet.</td></tr></tbody></table></div>

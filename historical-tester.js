@@ -9,7 +9,8 @@ const TAU = 0.5;
 const EPS = 1e-6;
 const BASE_MODEL_NAMES = ["Glicko-2", "Glicko-2 + recent form", "Elo", "Poisson scores", "Dynamic offence/defence", "NFL-aware margin distribution", "Points differential", "Home-rate baseline", "Neural network"];
 const CALIBRATED_NAMES = BASE_MODEL_NAMES.map(name => name + " · temperature-calibrated");
-const MODEL_NAMES = [...BASE_MODEL_NAMES, ...CALIBRATED_NAMES];
+const ENSEMBLE_NAMES = ["Ensemble: Neural + Glicko-form"];
+const MODEL_NAMES = [...BASE_MODEL_NAMES, ...CALIBRATED_NAMES, ...ENSEMBLE_NAMES];
 const $ = id => document.getElementById(id);
 const clamp = (x, lo, hi) => Math.max(lo, Math.min(hi, x));
 const logistic = x => x >= 0 ? 1 / (1 + Math.exp(-x)) : Math.exp(x) / (1 + Math.exp(x));
@@ -392,6 +393,12 @@ function temperatureScale(p, temperature) {
   const total = exps.reduce((sum, value) => sum + value, 0);
   return { home: exps[0] / total, draw: exps[1] / total, away: exps[2] / total };
 }
+function blendProbabilities(neural, glickoForm, neuralWeight) {
+  const p = {};
+  for (const key of ["home", "draw", "away"]) p[key] = neuralWeight * neural[key] + (1 - neuralWeight) * glickoForm[key];
+  return p;
+}
+function gameKey(row) { return [row.season, row.week, row.home, row.away].join("|"); }
 
 function fitTemperature(records) {
   // Fit only on validation predictions. The final test set is never consulted.
@@ -568,6 +575,37 @@ function runExperiment(data) {
       });
     }
   }
+  // Fit one linear-pool ensemble weight on the dedicated calibration holdout, then freeze it.
+  const ensembleName = ENSEMBLE_NAMES[0];
+  const neuralCalibration = records.filter(row => row.model === "Neural network" && row.split === "calibration");
+  const formCalibration = new Map(records.filter(row => row.model === "Glicko-2 + recent form" && row.split === "calibration").map(row => [gameKey(row), row]));
+  let ensembleWeight = 0.5, ensembleLoss = Infinity;
+  for (let step = 0; step <= 20; step++) {
+    const weight = step / 20;
+    let loss = 0, count = 0;
+    for (const neuralRow of neuralCalibration) {
+      const formRow = formCalibration.get(gameKey(neuralRow));
+      if (!formRow) continue;
+      const p = blendProbabilities(neuralRow.p, formRow.p, weight);
+      loss -= Math.log(Math.max(1e-12, p[neuralRow.actual]));
+      count++;
+    }
+    if (count && loss / count < ensembleLoss) { ensembleLoss = loss / count; ensembleWeight = weight; }
+  }
+  const formRowsBySplit = new Map();
+  for (const splitName of ["calibration", "validation", "test"]) {
+    formRowsBySplit.set(splitName, new Map(records.filter(row => row.model === "Glicko-2 + recent form" && row.split === splitName).map(row => [gameKey(row), row])));
+    const neuralRowsForSplit = records.filter(row => row.model === "Neural network" && row.split === splitName);
+    const formRows = formRowsBySplit.get(splitName);
+    for (const neuralRow of neuralRowsForSplit) {
+      const formRow = formRows.get(gameKey(neuralRow));
+      if (!formRow) throw new Error(`Missing Glicko-form partner for ensemble game ${gameKey(neuralRow)}.`);
+      const p = blendProbabilities(neuralRow.p, formRow.p, ensembleWeight);
+      assertProbabilityVector(p, ensembleName, neuralRow);
+      records.push({ ...neuralRow, model: ensembleName, p, ensembleWeight });
+    }
+  }
+
   const result = {};
   for (const name of BASE_MODEL_NAMES) {
     result[name] = {
@@ -582,7 +620,19 @@ function runExperiment(data) {
       temperature: temperatures[name.replace(" · temperature-calibrated", "")]
     };
   }
-  return { result, records, split, data, temperatures };
+  result[ensembleName] = {
+    validation: evaluate(records.filter(row => row.model === ensembleName), "validation"),
+    test: evaluate(records.filter(row => row.model === ensembleName), "test"),
+    ensembleWeight
+  };
+  const ensembleValidation = records.filter(row => row.model === ensembleName && row.split === "validation");
+  const ensembleTest = records.filter(row => row.model === ensembleName && row.split === "test");
+  const expectedValidation = data.filter(game => split.validation.has(game.season)).length;
+  const expectedTest = data.filter(game => split.test.has(game.season)).length;
+  if (ensembleValidation.length !== expectedValidation || ensembleTest.length !== expectedTest) {
+    throw new Error("Ensemble prediction coverage is incomplete.");
+  }
+  return { result, records, split, data, temperatures, ensembleWeights: { [ensembleName]: ensembleWeight } };
 }
 
 function renderResults(output) {

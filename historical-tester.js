@@ -60,9 +60,13 @@ function splitSeasons(data) {
   if (seasons.length < 8) throw new Error("The NFL dataset contains too few complete seasons for a chronological comparison.");
   const validationStart = Math.floor(seasons.length * 0.60);
   const testStart = Math.floor(seasons.length * 0.80);
+  const warmupSeasons = seasons.slice(0, validationStart);
+  const calibrationStart = Math.max(1, Math.floor(warmupSeasons.length * 0.8));
   return {
     seasons,
-    warmup: new Set(seasons.slice(0, validationStart)),
+    warmup: new Set(warmupSeasons),
+    modelTraining: new Set(warmupSeasons.slice(0, calibrationStart)),
+    calibration: new Set(warmupSeasons.slice(calibrationStart)),
     validation: new Set(seasons.slice(validationStart, testStart)),
     test: new Set(seasons.slice(testStart))
   };
@@ -476,10 +480,11 @@ function runExperiment(data) {
         Math.log1p(sa.marginN) / 3,
         dRate / 0.05
       ];
-      neuralRows.push({ features: neuralFeatures, actual: resultClass(game), split: splitName, season: game.season, week: game.week, home: game.home, away: game.away });
+      const recordSplitName = split.calibration.has(game.season) ? "calibration" : splitName;
+      neuralRows.push({ features: neuralFeatures, actual: resultClass(game), split: recordSplitName, season: game.season, week: game.week, home: game.home, away: game.away });
       for (const name of BASE_MODEL_NAMES.filter(name => name !== "Neural network")) assertProbabilityVector(p[name], name, game);
-      if (splitName !== "warmup") {
-        for (const name of BASE_MODEL_NAMES.filter(name => name !== "Neural network")) records.push({ model: name, split: splitName, p: p[name], actual: resultClass(game), season: game.season, week: game.week, home: game.home, away: game.away });
+      if (recordSplitName !== "warmup") {
+        for (const name of BASE_MODEL_NAMES.filter(name => name !== "Neural network")) records.push({ model: name, split: recordSplitName, p: p[name], actual: resultClass(game), season: game.season, week: game.week, home: game.home, away: game.away });
       }
     }
     // Update only after every game in this week has been forecast.
@@ -523,10 +528,11 @@ function runExperiment(data) {
       else history.draws++;
     }
   }
-  // Fit the network only on early warm-up seasons. Its weights remain frozen during validation and test.
-  const neuralTrainingRows = neuralRows.filter(row => split.warmup.has(row.season));
+  // Train only on the earliest warm-up block. The later warm-up block is held out for
+  // temperature fitting, then both network weights and temperature are frozen for validation/test.
+  const neuralTrainingRows = neuralRows.filter(row => split.modelTraining.has(row.season));
   const neuralPredict = trainNeuralNetwork(neuralTrainingRows);
-  for (const row of neuralRows.filter(row => !split.warmup.has(row.season))) {
+  for (const row of neuralRows.filter(row => !split.modelTraining.has(row.season))) {
     const p = neuralPredict(row.features);
     const game = { season: row.season, week: row.week, home: "home team", away: "away team" };
     assertProbabilityVector(p, "Neural network", game);
@@ -537,13 +543,14 @@ function runExperiment(data) {
 
   const temperatures = {};
   for (const name of BASE_MODEL_NAMES) {
-    const validationRows = records.filter(r => r.model === name && r.split === "validation");
-    const temperature = fitTemperature(validationRows);
+    const calibrationRows = records.filter(r => r.model === name && r.split === "calibration");
+    if (!calibrationRows.length) throw new Error(`No warm-up calibration holdout predictions exist for ${name}.`);
+    const temperature = fitTemperature(calibrationRows);
     temperatures[name] = temperature;
-    for (const r of records.filter(row => row.model === name && row.split === "test")) {
+    for (const r of records.filter(row => row.model === name && (row.split === "validation" || row.split === "test"))) {
       records.push({
         model: name + " · temperature-calibrated",
-        split: "test",
+        split: r.split,
         p: temperatureScale(r.p, temperature),
         actual: r.actual,
         season: r.season,
@@ -563,7 +570,7 @@ function runExperiment(data) {
   }
   for (const name of CALIBRATED_NAMES) {
     result[name] = {
-      validation: { games: 0, brier: NaN, logLoss: NaN, accuracy: NaN },
+      validation: evaluate(records.filter(r => r.model === name), "validation"),
       test: evaluate(records.filter(r => r.model === name), "test"),
       temperature: temperatures[name.replace(" · temperature-calibrated", "")]
     };
@@ -574,9 +581,16 @@ function runExperiment(data) {
 function renderResults(output) {
   const tbody = $("resultsBody");
   const rows = MODEL_NAMES.map(name => ({ name, ...output.result[name] }));
-  const selected = BASE_MODEL_NAMES
+  const selected = MODEL_NAMES
     .map(name => ({ name, ...output.result[name] }))
-    .sort((a, b) => a.validation.logLoss - b.validation.logLoss)[0];
+    .sort((a, b) => {
+      if (Math.abs(a.validation.logLoss - b.validation.logLoss) < 1e-12) {
+        const aCalibrated = a.name.endsWith(" · temperature-calibrated");
+        const bCalibrated = b.name.endsWith(" · temperature-calibrated");
+        if (aCalibrated !== bCalibrated) return aCalibrated ? 1 : -1;
+      }
+      return a.validation.logLoss - b.validation.logLoss;
+    })[0];
   rows.sort((a, b) => {
     const aCalibrated = a.name.endsWith(" · temperature-calibrated");
     const bCalibrated = b.name.endsWith(" · temperature-calibrated");
@@ -591,7 +605,8 @@ function renderResults(output) {
   const v = output.result[selected.name];
   const testSeasons = [...output.split.test].sort((a, b) => a - b);
   const validationSeasons = [...output.split.validation].sort((a, b) => a - b);
-  $("verdict").textContent = `Selected using validation log loss only: ${selected.name} (validation log loss ${fmt(v.validation.logLoss)}). Its held-out test result: log loss ${fmt(v.test.logLoss)}, Brier ${fmt(v.test.brier)}, accuracy ${fmt(v.test.accuracy * 100, 1)}%. Validation seasons: ${validationSeasons[0]}–${validationSeasons.at(-1)}; final test seasons: ${testSeasons[0]}–${testSeasons.at(-1)}. Test results are confirmation, not a model-selection signal.`;
+  const calibrationSeasons = [...output.split.calibration].sort((a, b) => a - b);
+  $("verdict").textContent = `Selected using validation log loss only: ${selected.name} (validation log loss ${fmt(v.validation.logLoss)}). Its held-out test result: log loss ${fmt(v.test.logLoss)}, Brier ${fmt(v.test.brier)}, accuracy ${fmt(v.test.accuracy * 100, 1)}%. Temperature fitting holdout: ${calibrationSeasons[0]}–${calibrationSeasons.at(-1)}; validation: ${validationSeasons[0]}–${validationSeasons.at(-1)}; final test: ${testSeasons[0]}–${testSeasons.at(-1)}. Test results are confirmation, not a model-selection signal.`;
   const select = $("calibrationModel");
   select.innerHTML = MODEL_NAMES.map(name => `<option value="${name}">${name}</option>`).join("");
   select.disabled = false;

@@ -111,8 +111,11 @@ Candidate formulation:
 - Partial pooling for sparse team histories.
 - A score likelihood that respects the discrete, non-negative nature of points and is checked against actual NFL score distributions.
 - Derive home-win, tie, and away-win probabilities from the joint score distribution.
+- Enumerate a bounded grid of plausible score pairs (for example, each team's scores from 0 to a validated upper bound), then sum the joint probabilities into win/tie/loss classes. This is computationally cheap and gives a transparent route from score predictions to outcome probabilities.
+- Treat NFL scoring as discrete and structured. Test whether a model reproduces the observed distribution of scoring totals and margins, especially mass around margins of 3 and 7. These key numbers matter directly to margin predictions; they must be learned from the historical sample rather than hard-coded as universal percentages.
+- Compare an empirical or smoothed NFL-aware score distribution with independent Poisson and overdispersed alternatives. Check tail behaviour and ties explicitly.
 
-Compare independent Poisson as the simple reference against an overdispersed or NFL-score-aware alternative. Do not assume Poisson is correct simply because it is convenient. Avoid treating scores as independent if validation evidence shows meaningful residual dependence.
+The lab's chosen data scope excludes sportsbook odds, so implied-probability conversion, vig removal, spread prices, and market line movement are contextual knowledge only, not model inputs or benchmark targets. A future separate market-comparison experiment would need its own clearly labelled data source and leakage policy.
 
 Acceptance criteria:
 - Predicted score distributions are numerically stable.

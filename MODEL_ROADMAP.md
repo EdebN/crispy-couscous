@@ -158,6 +158,44 @@ Acceptance criteria:
 - Document known limitations: no player availability, injuries, weather, betting odds, or play-by-play data.
 - Promote a model only after it passes the same benchmark suite as every other candidate.
 
+## Concrete build specification
+
+### First: make the benchmark trustworthy
+- Fix and test the prediction-record path before interpreting any leaderboard. The neural-network candidate must contribute exactly one prediction per eligible validation/test game; no undefined placeholder rows or duplicate predictions.
+- Add a tiny deterministic fixture covering same-week predictions, ties, duplicate games, invalid probabilities, and chronological updates.
+- Run the full browser backtest and record the output, data range, split boundaries, per-model game counts, and any runtime errors before judging model quality.
+- Keep the recent calibration table as a diagnostic, not a verdict. Show the model name and sample count; include uncertainty intervals or clearly flag sparse bins. The 0–20% bin with 39 games should trigger investigation, not a confident conclusion.
+
+### Second: build team strength from scores
+Maintain the existing models unchanged as benchmarks. Add a separate candidate with distinct latent offence and defence strengths:
+- Expected home points depend on home offence, away defence, league scoring level, and an estimated home effect.
+- Expected away points depend on away offence, home defence, and league scoring level.
+- Use shrinkage toward league average for teams with limited history and gradual offseason regression rather than resetting teams or treating last season as permanent truth.
+- Update the team states only after every forecast in a week has been generated. Freeze global model parameters before validation/test; team states may update from completed prior games as a real forecast system would.
+- Estimate neutral-site/home-effect handling only from verified fields and past data. If the source cannot reliably identify neutral venues, document that limitation rather than inventing a venue feature.
+
+### Third: turn expected points into scoreline probabilities
+Test candidates in increasing complexity:
+1. Independent Poisson scores as a transparent reference.
+2. An overdispersed discrete score model to handle variance beyond Poisson.
+3. A joint, NFL-aware discrete scoreline model that can preserve observed score and margin patterns, including mass near margins of 3 and 7.
+
+For the joint candidate, generate a finite score grid with a validated tail limit. For every score pair (h,a), calculate P(H=h,A=a); then:
+- P(home win) = sum of P(H=h,A=a) where h>a.
+- P(tie) = sum where h=a.
+- P(away win) = sum where h<a.
+
+The scoreline model must remain a proper probability distribution: every cell is non-negative, and the full grid plus any explicitly modelled tail mass sums to 1. Do not hard-code claims such as “15% of games finish three points apart”; estimate key-number effects from the training history and check their stability across seasons. Preserve joint dependence if evidence supports it; do not assume the two teams' scores are independent by convenience alone.
+
+### Fourth: calibrate and combine only after the base models work
+- Compare uncalibrated and calibrated three-class probabilities using validation-only fitting.
+- Investigate the low-probability home-win calibration gap by model, season, sample size, and probability range. Check for a feature/implementation bug before attempting to calibrate it away.
+- Test a small ensemble of the strongest dynamic-strength and scoreline candidates, with weights selected on validation only.
+- Use season-block resampling or rolling-origin validation to assess whether apparent gains persist across eras. Keep the final test untouched until the candidate and all settings are frozen.
+
+### Promotion gate
+A candidate is promoted only if it improves validation Brier score and/or log loss consistently, does not materially damage the other primary metric, remains competitive across multiple seasons, and passes the integrity tests. Report accuracy, calibration, score-distribution diagnostics, and uncertainty alongside the headline metrics. If the gain is indistinguishable from noise, retain the simpler model.
+
 ## Proposed order of work
 
 1. Fix evaluation/reporting leakage and add invariants.

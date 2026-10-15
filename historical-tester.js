@@ -87,15 +87,15 @@ function threeWayFromHomeWin(pHomeGivenNoDraw, pDraw) {
 }
 function resultClass(game) { return game.hs > game.as ? "home" : game.hs < game.as ? "away" : "draw"; }
 
-function poissonPMF(k, lambda) {
-  let p = Math.exp(-lambda);
-  for (let i = 1; i <= k; i++) p *= lambda / i;
-  return p;
+function poissonDistribution(lambda, maxScore) {
+  const probabilities = [Math.exp(-lambda)];
+  for (let k = 1; k <= maxScore; k++) probabilities[k] = probabilities[k - 1] * lambda / k;
+  return probabilities;
 }
 function poissonOutcome(lambdaHome, lambdaAway) {
   const maxScore = 60;
-  const hp = Array.from({ length: maxScore + 1 }, (_, k) => poissonPMF(k, lambdaHome));
-  const ap = Array.from({ length: maxScore + 1 }, (_, k) => poissonPMF(k, lambdaAway));
+  const hp = poissonDistribution(lambdaHome, maxScore);
+  const ap = poissonDistribution(lambdaAway, maxScore);
   let home = 0, draw = 0, away = 0;
   for (let h = 0; h <= maxScore; h++) {
     for (let a = 0; a <= maxScore; a++) {

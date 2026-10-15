@@ -290,6 +290,26 @@ function trainNeuralNetwork(rows) {
   };
 }
 
+function assertPredictionCoverage(records, data, split) {
+  for (const splitName of ["validation", "test"]) {
+    const seasons = split[splitName];
+    const expected = data.filter(game => seasons.has(game.season));
+    for (const modelName of BASE_MODEL_NAMES) {
+      const rows = records.filter(row => row.model === modelName && row.split === splitName);
+      if (rows.length !== expected.length) {
+        throw new Error(`${modelName} has ${rows.length} ${splitName} predictions for ${expected.length} eligible games.`);
+      }
+      const seen = new Set();
+      for (const row of rows) {
+        const key = [row.season, row.week, row.home, row.away].join("|");
+        if (seen.has(key)) throw new Error(`${modelName} produced a duplicate ${splitName} prediction: ${key}.`);
+        seen.add(key);
+        assertProbabilityVector(row.p, modelName, row);
+      }
+    }
+  }
+}
+
 function evaluate(records, splitName) {
   const subset = records.filter(r => r.split === splitName);
   if (!subset.length) return { games: 0, brier: NaN, logLoss: NaN, accuracy: NaN };
@@ -394,10 +414,10 @@ function runExperiment(data) {
         Math.log1p(sa.marginN) / 3,
         dRate / 0.05
       ];
-      neuralRows.push({ features: neuralFeatures, actual: resultClass(game), split: splitName, season: game.season, week: game.week });
+      neuralRows.push({ features: neuralFeatures, actual: resultClass(game), split: splitName, season: game.season, week: game.week, home: game.home, away: game.away });
       for (const name of BASE_MODEL_NAMES.filter(name => name !== "Neural network")) assertProbabilityVector(p[name], name, game);
       if (splitName !== "warmup") {
-        for (const name of BASE_MODEL_NAMES.filter(name => name !== "Neural network")) records.push({ model: name, split: splitName, p: p[name], actual: resultClass(game), season: game.season, week: game.week });
+        for (const name of BASE_MODEL_NAMES.filter(name => name !== "Neural network")) records.push({ model: name, split: splitName, p: p[name], actual: resultClass(game), season: game.season, week: game.week, home: game.home, away: game.away });
       }
     }
     // Update only after every game in this week has been forecast.
@@ -438,8 +458,10 @@ function runExperiment(data) {
     const p = neuralPredict(row.features);
     const game = { season: row.season, week: row.week, home: "home team", away: "away team" };
     assertProbabilityVector(p, "Neural network", game);
-    records.push({ model: "Neural network", split: row.split, p, actual: row.actual, season: row.season, week: row.week });
+    records.push({ model: "Neural network", split: row.split, p, actual: row.actual, season: row.season, week: row.week, home: row.home, away: row.away });
   }
+
+  assertPredictionCoverage(records, data, split);
 
   const temperatures = {};
   for (const name of BASE_MODEL_NAMES) {
@@ -454,6 +476,8 @@ function runExperiment(data) {
         actual: r.actual,
         season: r.season,
         week: r.week,
+        home: r.home,
+        away: r.away,
         temperature
       });
     }

@@ -36,6 +36,7 @@
         <article><h3>Poisson scores</h3><p>Estimates each team's points from its historical scoring and conceding averages, then sums scoreline probabilities.</p></article>
         <article><h3>Points differential</h3><p>Uses past scoring margins to estimate a team's strength and convert the expected margin into outcome probabilities.</p></article>
         <article><h3>Home-rate baseline</h3><p>Predicts from the historical home-win rate and league tie rate, without team-specific strength.</p></article>
+        <article><h3>Neural network</h3><p>A small regularised network learns nonlinear combinations of pre-game rating differences, recent form, scoring strengths, uncertainty, experience and home advantage. It trains on warm-up seasons only; its weights are frozen for validation and test.</p></article>
       </div>
       <div class="button-row"><button id="runBtn" class="primary" disabled>Run backtest</button><span class="muted" id="progressText">Loading historical NFL game data…</span></div>
       <div class="table-wrap result-table">
@@ -74,6 +75,7 @@
         <li><strong>Accuracy:</strong> percentage of correct outcome picks. It does not measure probability calibration.</li>
         <li><strong>Recent form:</strong> the form-adjusted Glicko model uses each team’s latest 12 neutralised scoring margins, with older games down-weighted and short histories shrunk toward zero. Its adjustment is capped to prevent a few unusual scores from overpowering the rating.</li>
         <li><strong>Poisson caveat:</strong> NFL scoring is discrete and shaped by touchdowns, field goals, and conversions. The Poisson model is a useful benchmark, not an assumption that football scores literally follow a Poisson process.</li>
+        <li><strong>Neural network:</strong> a small one-hidden-layer network is trained only on warm-up-season pre-game feature rows. Its weights are frozen before validation and final testing, while ratings and form features continue to update chronologically after each completed week. It can learn interactions among the available team-level signals, but this dataset does not contain referee assignments, player availability, weather, or betting odds.</li>
         <li><strong>Probability calibration experiment:</strong> each base model also gets a temperature-scaled variant. A single temperature is selected by minimising multiclass log loss on validation predictions only, then frozen and evaluated on the final test window. Calibrated variants show blank validation scores because those same validation outcomes fitted the temperature; presenting them as independent validation results would be misleading.</li>
         <li><strong>No test leakage:</strong> model selection and temperature fitting use validation data only. Final-test outcomes are reported for the frozen candidates and must not be used to choose the winner or tune later versions. Results are evidence for these seasons and methods, not a guarantee about future games.</li>
         <li><strong>Data checks:</strong> the run stops if game fields are invalid, a game is duplicated within a season/week, or any model produces an invalid three-way probability vector.</li>
@@ -83,6 +85,6 @@
   </main>
 
   <footer><span>NFL PREDICTION RESEARCH</span><span>Historical analysis only · no live ratings changed</span></footer>
-  <script type="module" src="./historical-tester.js?v=nfl-prediction-lab-3"></script>
+  <script type="module" src="./historical-tester.js?v=nfl-prediction-lab-4"></script>
 </body>
 </html>

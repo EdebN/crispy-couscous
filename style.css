@@ -153,17 +153,6 @@ button:disabled {
   color: var(--text);
 }
 
-.metric-card {
-  padding: 20px;
-  min-width: 0;
-}
-
-.parameter span {
-  display: block;
-  color: var(--muted);
-  font-size: 10px;
-}
-
 .verdict {
   margin: 20px 0 0;
   padding: 13px 15px;

@@ -67,7 +67,11 @@ test("all models complete chronological validation and test with valid probabili
   }
 
   for (const name of CALIBRATED_NAMES) {
-    assert.equal(output.result[name].validation.games, 0, name + " does not report calibration-fit validation as unbiased");
+    assert.ok(output.result[name].validation.games > 0, name + " has independent validation predictions");
+    assert.ok(Number.isFinite(output.result[name].validation.logLoss), name + " validation log loss");
     assert.ok(Number.isFinite(output.result[name].test.logLoss), name + " held-out test log loss");
+  }
+  for (const name of BASE_MODEL_NAMES) {
+    assert.ok(output.records.some(row => row.model === name && row.split === "calibration"), name + " has a separate warm-up calibration holdout");
   }
 });

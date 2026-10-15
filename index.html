@@ -1,82 +1,84 @@
-
 <!DOCTYPE html>
 <html lang="en">
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Glicko-2 Rating Lab</title>
-  <link rel="stylesheet" href="./style.css">
+  <meta name="theme-color" content="#0b0d12">
+  <title>NFL Prediction Lab</title>
+  <link rel="stylesheet" href="./style.css?v=nfl-lab-1">
 </head>
 <body>
   <header class="topbar">
     <div>
-      <p class="eyebrow">COMPETITION DASHBOARD / RESEARCH</p>
-      <h1>Rating Lab<span class="accent">.</span></h1>
-      <p class="subtitle">
-        Chronological backtesting, baseline comparisons, and custom rating research
-      </p>
+      <p class="eyebrow">NFL DATA / CHRONOLOGICAL BACKTESTING</p>
+      <h1>Prediction Lab<span class="accent">.</span></h1>
+      <p class="subtitle">Compare rating systems and score-based forecasts on real NFL results.</p>
     </div>
-    <span class="status" id="status">READY</span>
+    <span class="status" id="status">LOADING DATA</span>
   </header>
 
   <main>
-    <section class="panel" id="historicalNFL">
-      <div class="section-heading"><div><h2>Historical match backtest</h2><p>Replay real match results chronologically. Each period's predictions are scored before that period's ratings are updated.</p></div><span class="status" id="nflStatus">READY</span></div>
-      <p id="nflMeta" class="subtitle">NFL data loads by default. Upload a CSV to test another sport or competition.</p>
-      <div class="upload-row"><label for="customDataFile">Use another league or competition (CSV)<input id="customDataFile" type="file" accept=".csv,text/csv"></label><p class="upload-help">Required columns: home_team, away_team, home_score, away_score. Optional: season, week, date, game_type. Include at least 100 completed matches across five or more seasons for a useful tune/test split.</p></div>
-      <div class="button-row"><button id="runNFLBtn" class="primary">Run historical backtest</button></div>
-      <div class="table-wrap"><table><thead><tr><th>Model</th><th>Brier (lower better)</th><th>Log loss (lower better)</th><th>Outcome accuracy</th><th>Games</th></tr></thead><tbody id="nflResultsBody"><tr><td colspan="5" class="empty">No results yet.</td></tr></tbody></table></div>
-      <p id="nflVerdict" class="verdict">Run the backtest to compare the custom equation with standard Glicko-2, a TrueSkill-inspired team baseline, Elo, and MOVDA-inspired Elo.</p>
-      <p id="nflGuardMeta" class="warning">Numerical guard counts will appear here.</p>
-      <h3>Implementation tests</h3><div class="table-wrap"><table><thead><tr><th>Status</th><th>Test</th><th>Detail</th></tr></thead><tbody id="nflTestsBody"><tr><td colspan="3" class="empty">Tests run with the backtest.</td></tr></tbody></table></div>
-      <h3>Custom model calibration</h3><p class="subtitle">Predicted home-win probability versus observed home-win frequency.</p>
-      <div class="table-wrap"><table><thead><tr><th>Predicted bin</th><th>Mean prediction</th><th>Observed home wins</th><th>Games</th></tr></thead><tbody id="nflCalibrationBody"><tr><td colspan="4" class="empty">No calibration data yet.</td></tr></tbody></table></div>
-      <p class="warning">This retrospective validation does not alter live ratings. Predictions use only ratings available before the relevant week's results.</p>
-    </section>
-
-    <section class="panel" id="constantSweep">
-      <div class="section-heading"><div><h2>Margin-weight constant sweep</h2><p>Tests margin constants alongside 40 off-season policies. The search alternates between tuning both using validation seasons, then evaluates finalists on earlier validation seasons, then the top 10 are evaluated on later untouched seasons.</p></div><span class="status" id="sweepStatus">READY</span></div>
-      <p id="sweepMeta" class="subtitle">Uses the same dataset as the historical backtest. Load a different competition CSV above to repeat the experiment on other teams.</p>
-      <div class="button-row"><button id="runSweepBtn" class="primary">Sweep constants</button></div>
-      <div class="table-wrap"><table><thead><tr><th>Rank / model</th><th>Parameter 1 (scale / α)</th><th>Parameter 2 (base / β)</th><th>Parameter 3 (sensitivity / home adv.)</th><th>Parameter 4 (cap / λ)</th><th>Validation Brier</th><th>Validation log loss</th><th>Final-test Brier</th><th>Final-test log loss</th><th>Final-test accuracy</th></tr></thead><tbody id="sweepResultsBody"><tr><td colspan="10" class="empty">No sweep run yet. Run the constant sweep to compare settings.</td></tr></tbody></table></div>
-      <p id="sweepVerdict" class="verdict">The current formula remains the baseline until the held-out results justify changing it.</p>
-      <p class="warning">The search ranks settings using validation seasons only. MOVDA fits its expected-margin curve on earlier training seasons and selects its margin weight on validation seasons. Later final-test seasons are not used to select the winner. This reduces tuning bias, but does not replace testing on a genuinely separate competition.</p>
-    </section>
-
-    <section class="panel" id="formulaBakeoff">
-      <div class="section-heading"><div><h2>Formula bake-off</h2><p>Compare the current formula, optimised custom Glicko, established baselines, four hybrids, and eight additional update families on the same historical matches.</p></div><span class="status" id="formulaStatus">READY</span></div>
-      <p id="formulaMeta" class="subtitle">Parameter grids are selected using validation seasons. Final-test results are reported separately and must not be used to select constants.</p>
-      <div class="button-row"><button id="runFormulaBtn" class="primary">Test all formula families</button></div>
-      <div class="table-wrap"><table><thead><tr><th>Validation rank</th><th>Formula family</th><th>Selected parameters</th><th>Validation Brier</th><th>Validation log loss</th><th>Final-test Brier</th><th>Final-test log loss</th><th>Final-test accuracy</th><th>Test games</th></tr></thead><tbody id="formulaResultsBody"><tr><td colspan="9" class="empty">No bake-off run yet.</td></tr></tbody></table></div>
-      <p id="formulaVerdict" class="verdict">The incumbent remains the reference. A candidate should beat it on proper scoring metrics across multiple chronological windows before promotion.</p>
-      <p class="warning">This bake-off evaluates a single chronological validation/test split. The margin-category model is an ordinal-likelihood-inspired update, not a full independently fitted probabilistic margin model. Formula families share the same Glicko probability forecast unless they are explicitly Elo-based, so the main comparison is their rating-update rule.</p>
+    <section class="intro-grid">
+      <article class="metric-card"><span class="metric-label">DATASET</span><strong id="gamesMetric">—</strong><span class="metric-note" id="seasonsMetric">Regular-season games</span></article>
+      <article class="metric-card"><span class="metric-label">VALIDATION WINDOW</span><strong id="validationMetric">—</strong><span class="metric-note">Used for comparison, not tuning</span></article>
+      <article class="metric-card"><span class="metric-label">FINAL TEST WINDOW</span><strong id="testMetric">—</strong><span class="metric-note">Chronologically held out</span></article>
     </section>
 
     <section class="panel">
       <div class="section-heading">
-        <div>
-          <h2>How to read the backtest</h2>
-          <p>Use proper scoring rules first, then check accuracy and calibration.</p>
-        </div>
+        <div><h2>Model comparison</h2><p>Every game is predicted before its week's results update any model. No parameter sweep or equation optimisation.</p></div>
+        <span class="status" id="runStatus">READY</span>
       </div>
+      <div class="model-grid">
+        <article><h3>Glicko-2</h3><p>Tracks team strength and uncertainty in ratings. Uses a fixed home-field adjustment.</p></article>
+        <article><h3>Elo</h3><p>A simpler rating baseline with a fixed update rate and home-field adjustment.</p></article>
+        <article><h3>Poisson scores</h3><p>Estimates each team's points from its historical scoring and conceding averages, then sums scoreline probabilities.</p></article>
+        <article><h3>Points differential</h3><p>Uses past scoring margins to estimate a team's strength and convert the expected margin into outcome probabilities.</p></article>
+        <article><h3>Home-rate baseline</h3><p>Predicts from the historical home-win rate and league tie rate, without team-specific strength.</p></article>
+      </div>
+      <div class="button-row"><button id="runBtn" class="primary" disabled>Run backtest</button><span class="muted" id="progressText">Loading historical NFL game data…</span></div>
+      <div class="table-wrap result-table">
+        <table>
+          <thead><tr><th>Model</th><th>Validation Brier ↓</th><th>Validation log loss ↓</th><th>Validation accuracy</th><th>Test Brier ↓</th><th>Test log loss ↓</th><th>Test accuracy</th><th>Test games</th></tr></thead>
+          <tbody id="resultsBody"><tr><td colspan="8" class="empty">Waiting for NFL data.</td></tr></tbody>
+        </table>
+      </div>
+      <p class="verdict" id="verdict">The models will be compared on the same held-out games. Lower Brier score and log loss indicate better probability forecasts.</p>
+      <p class="warning" id="dataWarning">Data and results are loaded from the public nflverse game-results dataset. Betting lines and market odds are not used.</p>
+    </section>
+
+    <section class="panel">
+      <div class="section-heading">
+        <div><h2>Probability calibration</h2><p>For the final test window, compare predicted home-win probabilities with the actual home-win frequency.</p></div>
+      </div>
+      <label class="select-label" for="calibrationModel">Model to inspect
+        <select id="calibrationModel" disabled><option>Run the backtest first</option></select>
+      </label>
+      <div class="table-wrap">
+        <table><thead><tr><th>Predicted home-win range</th><th>Mean predicted</th><th>Observed home wins</th><th>Games</th></tr></thead>
+          <tbody id="calibrationBody"><tr><td colspan="4" class="empty">Calibration appears after the backtest.</td></tr></tbody>
+        </table>
+      </div>
+      <p class="subtitle small-note">A calibrated model's predictions should broadly match observed frequencies. Small bins can be noisy, so don't treat a one-bin lead as a scientific breakthrough.</p>
+    </section>
+
+    <section class="panel">
+      <div class="section-heading"><div><h2>Method and data notes</h2><p>What this experiment can and cannot establish.</p></div></div>
       <ul class="notes">
-        <li><strong>Brier score:</strong> evaluates probability forecasts; lower is better.</li>
-        <li><strong>Log loss:</strong> strongly penalises confident predictions that are wrong; lower is better.</li>
-        <li><strong>Outcome accuracy:</strong> the share of correctly predicted outcomes. It ignores how well-calibrated the probabilities were.</li>
-        <li><strong>Weekly frozen ratings:</strong> every match in a week is predicted before any result from that week changes ratings.</li>
-        <li><strong>Validation versus final test:</strong> tune parameters on validation seasons, then use later untouched seasons for the final comparison. Never choose a formula because it won on the final test.</li>
+        <li><strong>Source:</strong> nflverse's public game-results data, including regular-season scores and dates.</li>
+        <li><strong>Chronology:</strong> early complete seasons initialise the models; later seasons form validation and final-test windows. The current incomplete season is excluded.</li>
+        <li><strong>Frozen weeks:</strong> all games in the same season/week are forecast before any results from that week are applied.</li>
+        <li><strong>Brier score:</strong> multiclass squared probability error; lower is better.</li>
+        <li><strong>Log loss:</strong> penalises assigning very low probability to the result that actually happened; lower is better.</li>
+        <li><strong>Accuracy:</strong> percentage of correct outcome picks. It does not measure probability calibration.</li>
+        <li><strong>Poisson caveat:</strong> NFL scoring is discrete and shaped by touchdowns, field goals, and conversions. The Poisson model is a useful benchmark, not an assumption that football scores literally follow a Poisson process.</li>
+        <li><strong>No tuning on the test set:</strong> model settings are fixed in advance. Results are evidence for these seasons and methods, not a guarantee about future games.</li>
       </ul>
-      <p class="warning">
-        Historical results are evidence for the tested competition and time period, not proof of universal superiority. Keep the live rating system unchanged until a candidate wins across multiple chronological test windows and preferably another competition.
-      </p>
+      <p class="source-line">Data: <a href="https://github.com/nflverse/nfldata" target="_blank" rel="noreferrer">nflverse/nfldata</a> · <a href="https://github.com/nflverse/nflverse-data" target="_blank" rel="noreferrer">nflverse data releases</a></p>
     </section>
   </main>
 
-  <footer>
-    <span>RATING MODEL RESEARCH</span>
-    <span>Experiments do not change live ratings</span>
-  </footer>
-
-  <script type="module" src="./historical-tester.js?v=formula-bakeoff-3"></script>
+  <footer><span>NFL PREDICTION RESEARCH</span><span>Historical analysis only · no live ratings changed</span></footer>
+  <script type="module" src="./historical-tester.js?v=nfl-prediction-lab-1"></script>
 </body>
 </html>

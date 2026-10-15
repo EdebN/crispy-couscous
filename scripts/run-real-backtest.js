@@ -77,13 +77,16 @@ async function main() {
   console.log("Do not choose a model or settings from the final-test results.");
   console.log("");
   const comparisons = [...new Set([selected.name, "Glicko-2", "Glicko-2 + recent form · temperature-calibrated", "Neural network"])];
-  console.log("SEASON-BY-SEASON HELD-OUT TEST PERFORMANCE");
-  console.log(["Season", "Model", "Games", "Brier", "LogLoss", "Accuracy"].join("\t"));
-  for (const season of [...split.test].sort((a, b) => a - b)) {
-    for (const name of comparisons) {
-      const seasonRows = output.records.filter(row => row.model === name && row.split === "test" && row.season === season);
-      const m = metrics(seasonRows);
-      console.log([season, name, m.games, fmt(m.brier), fmt(m.logLoss), fmt(m.accuracy * 100, 1) + "%"].join("\t"));
+  console.log("SEASON-BY-SEASON VALIDATION AND HELD-OUT TEST PERFORMANCE");
+  console.log(["Window", "Season", "Model", "Games", "Brier", "LogLoss", "Accuracy"].join("\t"));
+  for (const windowName of ["validation", "test"]) {
+    const seasons = [...split[windowName]].sort((a, b) => a - b);
+    for (const season of seasons) {
+      for (const name of comparisons) {
+        const seasonRows = output.records.filter(row => row.model === name && row.split === windowName && row.season === season);
+        const m = metrics(seasonRows);
+        console.log([windowName, season, name, m.games, fmt(m.brier), fmt(m.logLoss), fmt(m.accuracy * 100, 1) + "%"].join("\t"));
+      }
     }
   }
   console.log("");

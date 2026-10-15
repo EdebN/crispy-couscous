@@ -13,6 +13,24 @@ const core = new Function(source.slice(0, browserStart) + `
 return { parseGames, runExperiment, BASE_MODEL_NAMES, CALIBRATED_NAMES, MODEL_NAMES };
 `)();
 const fmt = (value, digits = 4) => Number.isFinite(value) ? value.toFixed(digits) : "—";
+function wilsonInterval(successes, total, z = 1.96) {
+  if (!total) return [NaN, NaN];
+  const p = successes / total, z2 = z * z, denominator = 1 + z2 / total;
+  const center = (p + z2 / (2 * total)) / denominator;
+  const half = z * Math.sqrt(p * (1 - p) / total + z2 / (4 * total * total)) / denominator;
+  return [Math.max(0, center - half), Math.min(1, center + half)];
+}
+function metrics(rows) {
+  if (!rows.length) return { games: 0, brier: NaN, logLoss: NaN, accuracy: NaN };
+  let brier = 0, logLoss = 0, correct = 0;
+  for (const row of rows) {
+    const target = { home: row.actual === "home" ? 1 : 0, draw: row.actual === "draw" ? 1 : 0, away: row.actual === "away" ? 1 : 0 };
+    brier += (row.p.home - target.home) ** 2 + (row.p.draw - target.draw) ** 2 + (row.p.away - target.away) ** 2;
+    logLoss -= Math.log(Math.max(1e-12, row.p[row.actual]));
+    if (Object.entries(row.p).sort((a, b) => b[1] - a[1])[0][0] === row.actual) correct++;
+  }
+  return { games: rows.length, brier: brier / rows.length, logLoss: logLoss / rows.length, accuracy: correct / rows.length };
+}
 
 async function main() {
   console.log("Fetching historical games from nflverse…");
@@ -58,8 +76,19 @@ async function main() {
   console.log(`Frozen held-out test: log loss ${fmt(selected.test.logLoss)}, Brier ${fmt(selected.test.brier)}, accuracy ${fmt(selected.test.accuracy * 100, 1)}%.`);
   console.log("Do not choose a model or settings from the final-test results.");
   console.log("");
+  const comparisons = [...new Set([selected.name, "Glicko-2", "Glicko-2 + recent form · temperature-calibrated", "Neural network"])];
+  console.log("SEASON-BY-SEASON HELD-OUT TEST PERFORMANCE");
+  console.log(["Season", "Model", "Games", "Brier", "LogLoss", "Accuracy"].join("\t"));
+  for (const season of [...split.test].sort((a, b) => a - b)) {
+    for (const name of comparisons) {
+      const seasonRows = output.records.filter(row => row.model === name && row.split === "test" && row.season === season);
+      const m = metrics(seasonRows);
+      console.log([season, name, m.games, fmt(m.brier), fmt(m.logLoss), fmt(m.accuracy * 100, 1) + "%"].join("\t"));
+    }
+  }
+  console.log("");
   console.log("HOME-WIN CALIBRATION BY MODEL (held-out test)");
-  console.log(["Model", "Predicted bin", "Mean predicted", "Observed home wins", "Games"].join("\t"));
+  console.log(["Model", "Predicted bin", "Mean predicted", "Observed home wins", "95% Wilson interval", "Games"].join("\t"));
   for (const name of core.MODEL_NAMES) {
     const rows = output.records.filter(row => row.model === name && row.split === "test");
     const bins = Array.from({ length: 5 }, (_, i) => ({ lo: i * 0.2, hi: (i + 1) * 0.2, sum: 0, wins: 0, n: 0 }));
@@ -70,10 +99,12 @@ async function main() {
       bin.n++;
     }
     for (const bin of bins) {
+      const [lo, hi] = wilsonInterval(bin.wins, bin.n);
       console.log([
         name, `${bin.lo.toFixed(1)}–${bin.hi.toFixed(1)}`,
         bin.n ? fmt(bin.sum / bin.n, 3) : "—",
         bin.n ? fmt(bin.wins / bin.n, 3) : "—",
+        bin.n ? `${fmt(lo, 3)}–${fmt(hi, 3)}` : "—",
         bin.n
       ].join("\t"));
     }

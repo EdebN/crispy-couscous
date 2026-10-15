@@ -169,8 +169,9 @@ Acceptance criteria:
 
 ### First: make the benchmark trustworthy
 - Fix and test the prediction-record path before interpreting any leaderboard. The neural-network candidate must contribute exactly one prediction per eligible validation/test game; no undefined placeholder rows or duplicate predictions.
-- Add a tiny deterministic fixture covering same-week predictions, ties, duplicate games, invalid probabilities, and chronological updates.
-- Run the full browser backtest and record the output, data range, split boundaries, per-model game counts, and any runtime errors before judging model quality.
+- Add a deterministic Node fixture covering duplicate games, invalid probability vectors, same-week updates, and complete model prediction coverage; run it in GitHub Actions.
+- Run the real nflverse historical backtest in CI and print data range, split boundaries, per-model validation/test metrics, calibration temperatures, and per-model home-win calibration bins.
+- Inspect the real backtest report before judging model quality; the synthetic fixture is only an integrity test.
 - Keep the recent calibration table as a diagnostic, not a verdict. Show the model name and sample count; include uncertainty intervals or clearly flag sparse bins. The 0–20% bin with 39 games should trigger investigation, not a confident conclusion.
 
 ### Mathematical starting point for the score model

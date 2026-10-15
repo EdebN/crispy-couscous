@@ -7,7 +7,7 @@ const CENTER = 1500;
 const SCALE = 173.7178;
 const TAU = 0.5;
 const EPS = 1e-6;
-const BASE_MODEL_NAMES = ["Glicko-2", "Glicko-2 + recent form", "Elo", "Poisson scores", "Dynamic offence/defence", "Points differential", "Home-rate baseline", "Neural network"];
+const BASE_MODEL_NAMES = ["Glicko-2", "Glicko-2 + recent form", "Elo", "Poisson scores", "Dynamic offence/defence", "NFL-aware margin distribution", "Points differential", "Home-rate baseline", "Neural network"];
 const CALIBRATED_NAMES = BASE_MODEL_NAMES.map(name => name + " · temperature-calibrated");
 const MODEL_NAMES = [...BASE_MODEL_NAMES, ...CALIBRATED_NAMES];
 const $ = id => document.getElementById(id);
@@ -153,14 +153,16 @@ function poissonDistribution(lambda, maxScore) {
   for (let k = 1; k <= maxScore; k++) probabilities[k] = probabilities[k - 1] * lambda / k;
   return probabilities;
 }
-function poissonOutcome(lambdaHome, lambdaAway) {
+function poissonOutcome(lambdaHome, lambdaAway, marginWeights = null) {
   const maxScore = 60;
   const hp = poissonDistribution(lambdaHome, maxScore);
   const ap = poissonDistribution(lambdaAway, maxScore);
   let home = 0, draw = 0, away = 0;
   for (let h = 0; h <= maxScore; h++) {
     for (let a = 0; a <= maxScore; a++) {
-      const p = hp[h] * ap[a];
+      const raw = hp[h] * ap[a];
+      const weight = marginWeights ? marginWeights[clamp(h - a, -60, 60) + 60] : 1;
+      const p = raw * weight;
       if (h > a) home += p;
       else if (h === a) draw += p;
       else away += p;
@@ -168,6 +170,27 @@ function poissonOutcome(lambdaHome, lambdaAway) {
   }
   const total = home + draw + away;
   return { home: home / total, draw: draw / total, away: away / total };
+}
+function poissonMarginMass(lambdaHome, lambdaAway) {
+  const maxScore = 60, hp = poissonDistribution(lambdaHome, maxScore), ap = poissonDistribution(lambdaAway, maxScore);
+  const mass = Array(121).fill(0);
+  for (let h = 0; h <= maxScore; h++) {
+    for (let a = 0; a <= maxScore; a++) mass[clamp(h - a, -60, 60) + 60] += hp[h] * ap[a];
+  }
+  const total = mass.reduce((sum, value) => sum + value, 0);
+  return mass.map(value => value / total);
+}
+function fittedMarginWeights(expectedCounts, observedCounts, games) {
+  if (!games) return Array(121).fill(1);
+  const priorGames = 30;
+  const weights = expectedCounts.map((expected, index) => {
+    const baseRate = expected / games;
+    const stabilizer = priorGames * baseRate + 0.02;
+    return clamp((observedCounts[index] + stabilizer) / (expected + stabilizer), 0.35, 2.8);
+  });
+  const expectedAverage = expectedCounts.reduce((sum, count, index) => sum + count * weights[index], 0) /
+    Math.max(1e-12, expectedCounts.reduce((sum, count) => sum + count, 0));
+  return weights.map(weight => weight / Math.max(1e-12, expectedAverage));
 }
 
 function glickoForecast(home, away, pDraw) {
@@ -379,6 +402,8 @@ function runExperiment(data) {
   const offenceDefence = new Map(teams.map(t => [t, freshOffenceDefence()]));
   const recentMargins = new Map(teams.map(t => [t, []]));
   const history = { games: 0, draws: 0, homeWins: 0, awayWins: 0, homeScoreSum: 0, awayScoreSum: 0, homeMarginSum: 0 };
+  const expectedMarginCounts = Array(121).fill(0);
+  const observedMarginCounts = Array(121).fill(0);
   const records = [];
   const neuralRows = [];
   let lastSeason = null;
@@ -399,6 +424,8 @@ function runExperiment(data) {
     const leagueAwayMean = (history.awayScoreSum + 8 * 21.5) / (history.games + 8);
     const homeAdv = history.games ? history.homeMarginSum / history.games : 2.5;
     const dynamicExpectedScores = new Map();
+    const marginPeriodUpdates = [];
+    const marginWeights = fittedMarginWeights(expectedMarginCounts, observedMarginCounts, history.games);
     for (const game of period) {
       const gh = glicko.get(game.home), ga = glicko.get(game.away);
       const eh = elo.get(game.home), ea = elo.get(game.away);
@@ -414,6 +441,7 @@ function runExperiment(data) {
       const dynamicLambdaHome = clamp(leagueHomeMean * Math.exp(odHome.offence - odAway.defence), 3, 50);
       const dynamicLambdaAway = clamp(leagueAwayMean * Math.exp(odAway.offence - odHome.defence), 3, 50);
       dynamicExpectedScores.set([game.season, game.week, game.home, game.away].join("|"), { home: dynamicLambdaHome, away: dynamicLambdaAway });
+      marginPeriodUpdates.push({ lambdaHome, lambdaAway, actualMargin: game.hs - game.as });
       const homeStrength = sh.marginN ? sh.neutralMarginSum / (sh.marginN + 5) : 0;
       const awayStrength = sa.marginN ? sa.neutralMarginSum / (sa.marginN + 5) : 0;
       const expectedMargin = homeStrength - awayStrength + (Number.isFinite(homeAdv) ? homeAdv : 2.5);
@@ -427,6 +455,7 @@ function runExperiment(data) {
         "Elo": eloForecast(eh, ea, dRate),
         "Poisson scores": poissonOutcome(lambdaHome, lambdaAway),
         "Dynamic offence/defence": poissonOutcome(dynamicLambdaHome, dynamicLambdaAway),
+        "NFL-aware margin distribution": poissonOutcome(lambdaHome, lambdaAway, marginWeights),
         "Points differential": threeWayFromHomeWin(pMargin, dRate),
         "Home-rate baseline": threeWayFromHomeWin(baselineHome, dRate)
       };
@@ -455,6 +484,11 @@ function runExperiment(data) {
     }
     // Update only after every game in this week has been forecast.
     updateOffenceDefence(offenceDefence, period, dynamicExpectedScores);
+    for (const item of marginPeriodUpdates) {
+      const mass = poissonMarginMass(item.lambdaHome, item.lambdaAway);
+      for (let index = 0; index < mass.length; index++) expectedMarginCounts[index] += mass[index];
+      observedMarginCounts[clamp(item.actualMargin, -60, 60) + 60]++;
+    }
     updateGlickoPeriod(glicko, period);
     const frozenElo = new Map(elo);
     const eloDeltas = new Map(teams.map(t => [t, 0]));

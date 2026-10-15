@@ -484,10 +484,14 @@ function runExperiment(data) {
     }
     // Update only after every game in this week has been forecast.
     updateOffenceDefence(offenceDefence, period, dynamicExpectedScores);
-    for (const item of marginPeriodUpdates) {
-      const mass = poissonMarginMass(item.lambdaHome, item.lambdaAway);
-      for (let index = 0; index < mass.length; index++) expectedMarginCounts[index] += mass[index];
-      observedMarginCounts[clamp(item.actualMargin, -60, 60) + 60]++;
+    // Fit the global margin correction on warm-up seasons only. Freeze it before validation
+    // and final test; those periods must not refit global distribution parameters.
+    if (splitName === "warmup") {
+      for (const item of marginPeriodUpdates) {
+        const mass = poissonMarginMass(item.lambdaHome, item.lambdaAway);
+        for (let index = 0; index < mass.length; index++) expectedMarginCounts[index] += mass[index];
+        observedMarginCounts[clamp(item.actualMargin, -60, 60) + 60]++;
+      }
     }
     updateGlickoPeriod(glicko, period);
     const frozenElo = new Map(elo);

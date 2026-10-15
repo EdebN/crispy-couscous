@@ -7,7 +7,9 @@ const CENTER = 1500;
 const SCALE = 173.7178;
 const TAU = 0.5;
 const EPS = 1e-6;
-const MODEL_NAMES = ["Glicko-2", "Glicko-2 + recent form", "Elo", "Poisson scores", "Points differential", "Home-rate baseline"];
+const BASE_MODEL_NAMES = ["Glicko-2", "Glicko-2 + recent form", "Elo", "Poisson scores", "Points differential", "Home-rate baseline"];
+const CALIBRATED_NAMES = BASE_MODEL_NAMES.map(name => name + " · temperature-calibrated");
+const MODEL_NAMES = [...BASE_MODEL_NAMES, ...CALIBRATED_NAMES];
 const $ = id => document.getElementById(id);
 const clamp = (x, lo, hi) => Math.max(lo, Math.min(hi, x));
 const logistic = x => x >= 0 ? 1 / (1 + Math.exp(-x)) : Math.exp(x) / (1 + Math.exp(x));
@@ -202,6 +204,25 @@ function evaluate(records, splitName) {
 }
 function fmt(value, digits = 4) { return Number.isFinite(value) ? value.toFixed(digits) : "—"; }
 
+function temperatureScale(p, temperature) {
+  const logits = ["home", "draw", "away"].map(key => Math.log(Math.max(1e-12, p[key])) / temperature);
+  const maxLogit = Math.max(...logits);
+  const exps = logits.map(value => Math.exp(value - maxLogit));
+  const total = exps.reduce((sum, value) => sum + value, 0);
+  return { home: exps[0] / total, draw: exps[1] / total, away: exps[2] / total };
+}
+
+function fitTemperature(records) {
+  // Fit only on validation predictions. The final test set is never consulted.
+  let bestT = 1, bestLoss = Infinity;
+  for (let t = 0.5; t <= 3.0001; t += 0.025) {
+    let loss = 0;
+    for (const r of records) loss -= Math.log(Math.max(1e-12, temperatureScale(r.p, t)[r.actual]));
+    if (loss < bestLoss) { bestLoss = loss; bestT = t; }
+  }
+  return bestT;
+}
+
 function runExperiment(data) {
   const split = splitSeasons(data), teams = makeTeams(data);
   const glicko = new Map(teams.map(t => [t, freshGlicko()]));
@@ -251,7 +272,7 @@ function runExperiment(data) {
         "Home-rate baseline": threeWayFromHomeWin(baselineHome, dRate)
       };
       if (splitName !== "warmup") {
-        for (const name of MODEL_NAMES) records.push({ model: name, split: splitName, p: p[name], actual: resultClass(game), season: game.season, week: game.week });
+        for (const name of BASE_MODEL_NAMES) records.push({ model: name, split: splitName, p: p[name], actual: resultClass(game), season: game.season, week: game.week });
       }
     }
     // Update only after every game in this week has been forecast.
@@ -285,14 +306,38 @@ function runExperiment(data) {
       else history.draws++;
     }
   }
+  const temperatures = {};
+  for (const name of BASE_MODEL_NAMES) {
+    const validationRows = records.filter(r => r.model === name && r.split === "validation");
+    const temperature = fitTemperature(validationRows);
+    temperatures[name] = temperature;
+    for (const r of records.filter(row => row.model === name && row.split === "test")) {
+      records.push({
+        model: name + " · temperature-calibrated",
+        split: "test",
+        p: temperatureScale(r.p, temperature),
+        actual: r.actual,
+        season: r.season,
+        week: r.week,
+        temperature
+      });
+    }
+  }
   const result = {};
-  for (const name of MODEL_NAMES) {
+  for (const name of BASE_MODEL_NAMES) {
     result[name] = {
       validation: evaluate(records.filter(r => r.model === name), "validation"),
       test: evaluate(records.filter(r => r.model === name), "test")
     };
   }
-  return { result, records, split, data };
+  for (const name of CALIBRATED_NAMES) {
+    result[name] = {
+      validation: { games: 0, brier: NaN, logLoss: NaN, accuracy: NaN },
+      test: evaluate(records.filter(r => r.model === name), "test"),
+      temperature: temperatures[name.replace(" · temperature-calibrated", "")]
+    };
+  }
+  return { result, records, split, data, temperatures };
 }
 
 function renderResults(output) {
@@ -366,7 +411,7 @@ async function runBacktest() {
     const output = runExperiment(games);
     renderResults(output);
     $("runStatus").textContent = "COMPLETE";
-    $("progressText").textContent = `Compared ${MODEL_NAMES.length} methods across ${output.result[MODEL_NAMES[0]].test.games.toLocaleString()} final-test games.`;
+    $("progressText").textContent = `Compared ${BASE_MODEL_NAMES.length} base models plus validation-fitted calibration variants across ${output.result[BASE_MODEL_NAMES[0]].test.games.toLocaleString()} final-test games.`;
   } catch (error) {
     $("runStatus").textContent = "ERROR";
     $("progressText").textContent = error.message;

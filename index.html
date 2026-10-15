@@ -59,11 +59,11 @@
         <select id="calibrationModel" disabled><option>Run the backtest first</option></select>
       </label>
       <div class="table-wrap">
-        <table><thead><tr><th>Predicted home-win range</th><th>Mean predicted</th><th>Observed home wins</th><th>Games</th></tr></thead>
-          <tbody id="calibrationBody"><tr><td colspan="4" class="empty">Calibration appears after the backtest.</td></tr></tbody>
+        <table><thead><tr><th>Predicted home-win range</th><th>Mean predicted</th><th>Observed home wins</th><th>95% interval for observed rate</th><th>Games</th></tr></thead>
+          <tbody id="calibrationBody"><tr><td colspan="5" class="empty">Calibration appears after the backtest.</td></tr></tbody>
         </table>
       </div>
-      <p class="subtitle small-note">A calibrated model's predictions should broadly match observed frequencies. Small bins can be noisy, so don't treat a one-bin lead as a scientific breakthrough.</p>
+      <p class="subtitle small-note">A calibrated model's predictions should broadly match observed frequencies. The 95% interval shows sampling uncertainty around the observed win rate; small bins can be noisy.</p>
     </section>
 
     <section class="panel">

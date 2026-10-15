@@ -13,7 +13,7 @@
       <p class="eyebrow">COMPETITION DASHBOARD / RESEARCH</p>
       <h1>Rating Lab<span class="accent">.</span></h1>
       <p class="subtitle">
-        Historical validation, margin-weight tuning, and stability testing
+        Historical validation, margin-weight tuning, and TrueSkill comparison
       </p>
     </div>
     <span class="status" id="status">READY</span>
@@ -200,7 +200,7 @@
       <div class="upload-row"><label for="customDataFile">Use another league or competition (CSV)<input id="customDataFile" type="file" accept=".csv,text/csv"></label><p class="upload-help">Required columns: home_team, away_team, home_score, away_score. Optional: season, week, date, game_type. Include at least 100 completed matches across five or more seasons for a useful tune/test split.</p></div>
       <div class="button-row"><button id="runNFLBtn" class="primary">Run historical backtest</button></div>
       <div class="table-wrap"><table><thead><tr><th>Model</th><th>Brier (lower better)</th><th>Log loss (lower better)</th><th>Outcome accuracy</th><th>Games</th></tr></thead><tbody id="nflResultsBody"><tr><td colspan="5" class="empty">No results yet.</td></tr></tbody></table></div>
-      <p id="nflVerdict" class="verdict">Run the backtest to compare the custom equation with standard Glicko-2 and Elo.</p>
+      <p id="nflVerdict" class="verdict">Run the backtest to compare the custom equation with standard Glicko-2, a TrueSkill-inspired team baseline, and Elo.</p>
       <p id="nflGuardMeta" class="warning">Numerical guard counts will appear here.</p>
       <h3>Implementation tests</h3><div class="table-wrap"><table><thead><tr><th>Status</th><th>Test</th><th>Detail</th></tr></thead><tbody id="nflTestsBody"><tr><td colspan="3" class="empty">Tests run with the backtest.</td></tr></tbody></table></div>
       <h3>Custom model calibration</h3><p class="subtitle">Predicted home-win probability versus observed home-win frequency.</p>
@@ -246,6 +246,6 @@
   </footer>
 
   <script type="module" src="./script.js?v=robust-holdout-2"></script>
-  <script type="module" src="./historical-tester.js?v=season-boundary-1"></script>
+  <script type="module" src="./historical-tester.js?v=trueskill-baseline-1"></script>
 </body>
 </html>

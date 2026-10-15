@@ -13,7 +13,7 @@
       <p class="eyebrow">COMPETITION DASHBOARD / RESEARCH</p>
       <h1>Rating Lab<span class="accent">.</span></h1>
       <p class="subtitle">
-        Glicko-2 parameter optimisation and stability testing
+        Historical validation, margin-weight tuning, and stability testing
       </p>
     </div>
     <span class="status" id="status">READY</span>
@@ -196,7 +196,8 @@
 
     <section class="panel" id="historicalNFL">
       <div class="section-heading"><div><h2>Historical NFL backtest</h2><p>Replay real regular-season results chronologically. Each week's predictions are scored before that week's ratings are updated.</p></div><span class="status" id="nflStatus">READY</span></div>
-      <p id="nflMeta" class="subtitle">Historical data loads from nflverse when you run the test.</p>
+      <p id="nflMeta" class="subtitle">Historical data loads from nflverse when you run the test. Upload a CSV to test another sport or competition.</p>
+      <div class="upload-row"><label for="customDataFile">Use another league or competition (CSV)<input id="customDataFile" type="file" accept=".csv,text/csv"></label><p class="upload-help">Required columns: home_team, away_team, home_score, away_score. Optional: season, week, date, game_type. Include at least 100 completed matches across five or more seasons for a useful tune/test split.</p></div>
       <div class="button-row"><button id="runNFLBtn" class="primary">Run historical backtest</button></div>
       <div class="table-wrap"><table><thead><tr><th>Model</th><th>Brier (lower better)</th><th>Log loss (lower better)</th><th>Outcome accuracy</th><th>Games</th></tr></thead><tbody id="nflResultsBody"><tr><td colspan="5" class="empty">No results yet.</td></tr></tbody></table></div>
       <p id="nflVerdict" class="verdict">Run the backtest to compare the custom equation with standard Glicko-2 and Elo.</p>
@@ -205,6 +206,15 @@
       <h3>Custom model calibration</h3><p class="subtitle">Predicted home-win probability versus observed home-win frequency.</p>
       <div class="table-wrap"><table><thead><tr><th>Predicted bin</th><th>Mean prediction</th><th>Observed home wins</th><th>Games</th></tr></thead><tbody id="nflCalibrationBody"><tr><td colspan="4" class="empty">No calibration data yet.</td></tr></tbody></table></div>
       <p class="warning">This retrospective validation does not alter live ratings. Predictions use only ratings available before the relevant week's results.</p>
+    </section>
+
+    <section class="panel" id="constantSweep">
+      <div class="section-heading"><div><h2>Margin-weight constant sweep</h2><p>Tests 108 combinations against the same real match history. Settings are ranked on earlier validation seasons, then the top 10 are evaluated on later untouched seasons.</p></div><span class="status" id="sweepStatus">READY</span></div>
+      <p id="sweepMeta" class="subtitle">Uses the same dataset as the historical backtest. Load a different competition CSV above to repeat the experiment on other teams.</p>
+      <div class="button-row"><button id="runSweepBtn" class="primary">Sweep constants</button></div>
+      <div class="table-wrap"><table><thead><tr><th>Rank / model</th><th>Margin scale</th><th>Denominator base</th><th>Gap sensitivity</th><th>Weight cap</th><th>Validation Brier</th><th>Validation log loss</th><th>Final-test Brier</th><th>Final-test log loss</th><th>Final-test accuracy</th></tr></thead><tbody id="sweepResultsBody"><tr><td colspan="10" class="empty">No sweep run yet. Run the constant sweep to compare settings.</td></tr></tbody></table></div>
+      <p id="sweepVerdict" class="verdict">The current formula remains the baseline until the held-out results justify changing it.</p>
+      <p class="warning">The search ranks settings using validation seasons only. Later final-test seasons are not used to select the winner. This reduces tuning bias, but does not replace testing on a genuinely separate competition.</p>
     </section>
 
     <section class="panel">
@@ -236,6 +246,6 @@
   </footer>
 
   <script type="module" src="./script.js?v=robust-holdout-2"></script>
-  <script type="module" src="./historical-tester.js?v=nfl-backtest-1"></script>
+  <script type="module" src="./historical-tester.js?v=constant-sweep-2"></script>
 </body>
 </html>

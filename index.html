@@ -20,13 +20,13 @@
   <main>
     <section class="intro-grid">
       <article class="metric-card"><span class="metric-label">DATASET</span><strong id="gamesMetric">—</strong><span class="metric-note" id="seasonsMetric">Regular-season games</span></article>
-      <article class="metric-card"><span class="metric-label">VALIDATION WINDOW</span><strong id="validationMetric">—</strong><span class="metric-note">Used for comparison, not tuning</span></article>
+      <article class="metric-card"><span class="metric-label">VALIDATION WINDOW</span><strong id="validationMetric">—</strong><span class="metric-note">Used for model selection and tuning</span></article>
       <article class="metric-card"><span class="metric-label">FINAL TEST WINDOW</span><strong id="testMetric">—</strong><span class="metric-note">Chronologically held out</span></article>
     </section>
 
     <section class="panel">
       <div class="section-heading">
-        <div><h2>Model comparison</h2><p>Every game is predicted before its week's results update any model. Includes a restrained recent-form signal, without a parameter sweep or equation optimisation.</p></div>
+        <div><h2>Model comparison</h2><p>Every game is predicted before its week's results update any model. Models are selected using validation log loss; final-test results are held out for confirmation.</p></div>
         <span class="status" id="runStatus">READY</span>
       </div>
       <div class="model-grid">
@@ -34,8 +34,12 @@
         <article><h3>Glicko-2 + recent form</h3><p>Combines long-run team strength with a capped, recency-weighted signal from recent scoring margins. Older games count less, and short histories are shrunk toward average.</p></article>
         <article><h3>Elo</h3><p>A simpler rating baseline with a fixed update rate and home-field adjustment.</p></article>
         <article><h3>Poisson scores</h3><p>Estimates each team's points from its historical scoring and conceding averages, then sums scoreline probabilities.</p></article>
+        <article><h3>Dynamic offence/defence</h3><p>Tracks separate, gradually changing team offence and defence strengths. Updates use capped scoring residuals, same-week forecasts share one snapshot, and team strengths regress toward average between seasons.</p></article>
+        <article><h3>NFL-aware margin distribution</h3><p>Learns a correction to the Poisson score grid from warm-up seasons only, where actual scoring margins differ from expected margins. The fitted correction is frozen for validation and test.</p></article>
         <article><h3>Points differential</h3><p>Uses past scoring margins to estimate a team's strength and convert the expected margin into outcome probabilities.</p></article>
         <article><h3>Home-rate baseline</h3><p>Predicts from the historical home-win rate and league tie rate, without team-specific strength.</p></article>
+        <article><h3>Neural network</h3><p>A small regularised network learns nonlinear combinations of pre-game rating differences, recent form, scoring strengths, uncertainty, experience and home advantage. It trains on the earliest warm-up seasons; weights stay frozen afterward.</p></article>
+        <article><h3>Neural + Glicko-form ensemble</h3><p>Combines neural and Glicko-2 recent-form probabilities. The blend weight is fitted on the separate warm-up calibration holdout, then frozen and judged on validation before the final test.</p></article>
       </div>
       <div class="button-row"><button id="runBtn" class="primary" disabled>Run backtest</button><span class="muted" id="progressText">Loading historical NFL game data…</span></div>
       <div class="table-wrap result-table">
@@ -44,7 +48,7 @@
           <tbody id="resultsBody"><tr><td colspan="8" class="empty">Waiting for NFL data.</td></tr></tbody>
         </table>
       </div>
-      <p class="verdict" id="verdict">The models will be compared on the same held-out games. Lower Brier score and log loss indicate better probability forecasts.</p>
+      <p class="verdict" id="verdict">The highlighted model is selected by validation log loss only. Final-test metrics are reported as held-out confirmation, never used to choose the winner.</p>
       <p class="warning" id="dataWarning">Data and results are loaded from the public nflverse game-results dataset. Betting lines and market odds are not used.</p>
     </section>
 
@@ -56,11 +60,11 @@
         <select id="calibrationModel" disabled><option>Run the backtest first</option></select>
       </label>
       <div class="table-wrap">
-        <table><thead><tr><th>Predicted home-win range</th><th>Mean predicted</th><th>Observed home wins</th><th>Games</th></tr></thead>
-          <tbody id="calibrationBody"><tr><td colspan="4" class="empty">Calibration appears after the backtest.</td></tr></tbody>
+        <table><thead><tr><th>Predicted home-win range</th><th>Mean predicted</th><th>Observed home wins</th><th>95% interval for observed rate</th><th>Games</th></tr></thead>
+          <tbody id="calibrationBody"><tr><td colspan="5" class="empty">Calibration appears after the backtest.</td></tr></tbody>
         </table>
       </div>
-      <p class="subtitle small-note">A calibrated model's predictions should broadly match observed frequencies. Small bins can be noisy, so don't treat a one-bin lead as a scientific breakthrough.</p>
+      <p class="subtitle small-note">A calibrated model's predictions should broadly match observed frequencies. The 95% interval shows sampling uncertainty around the observed win rate; small bins can be noisy.</p>
     </section>
 
     <section class="panel">
@@ -74,14 +78,19 @@
         <li><strong>Accuracy:</strong> percentage of correct outcome picks. It does not measure probability calibration.</li>
         <li><strong>Recent form:</strong> the form-adjusted Glicko model uses each team’s latest 12 neutralised scoring margins, with older games down-weighted and short histories shrunk toward zero. Its adjustment is capped to prevent a few unusual scores from overpowering the rating.</li>
         <li><strong>Poisson caveat:</strong> NFL scoring is discrete and shaped by touchdowns, field goals, and conversions. The Poisson model is a useful benchmark, not an assumption that football scores literally follow a Poisson process.</li>
-        <li><strong>Probability calibration experiment:</strong> each base model also gets a temperature-scaled variant. A single temperature is selected by minimising multiclass log loss on validation predictions only, then frozen and evaluated on the final test window. Calibrated variants show blank validation scores because those same validation outcomes fitted the temperature; presenting them as independent validation results would be misleading.</li>
-        <li><strong>No test leakage:</strong> final-test outcomes are not used to fit temperatures or alter model settings. Results are evidence for these seasons and methods, not a guarantee about future games.</li>
+        <li><strong>Dynamic offence/defence:</strong> a separate candidate updates log-scale team offence and defence strengths from capped pregame score residuals. Updates are aggregated after the whole week is forecast, team strengths are bounded, and both strengths regress 30% toward league average between seasons. It uses the same independent-Poisson scoreline engine as the reference score model, so its test measures the value of dynamic team states rather than a different score distribution.</li>
+        <li><strong>NFL-aware margin distribution:</strong> adjusts the independent-Poisson score grid using a smoothed ratio of observed historical margin counts to the margin mass the same forecasts expected. It fits the correction on warm-up seasons only, uses a 30-game prior and bounded weights, and freezes those global weights for validation and test. This is a calibration candidate, not proof that a particular key-number effect is stable.</li>
+        <li><strong>Neural network:</strong> a small one-hidden-layer network is trained on the earliest warm-up-season pre-game feature rows. A later warm-up block is reserved for calibration, and network weights remain frozen through validation and final testing. Ratings and form features continue to update chronologically after each completed week.</li>
+        <li><strong>Ensemble:</strong> a linear probability blend of the neural network and Glicko-2 + recent form. Its single weight is selected on the calibration holdout and frozen before validation; it is only selected as the winner if its validation log loss beats the other candidates.</li>
+        <li><strong>Probability calibration experiment:</strong> each base model also gets a temperature-scaled variant. The earliest warm-up seasons train the neural network; a later, separate block of warm-up seasons fits each model's temperature. Calibrated and uncalibrated candidates are then evaluated on the untouched validation block and final test block. Model selection uses validation log loss, while the final test remains confirmation only.</li>
+        <li><strong>No test leakage:</strong> model weights and temperature calibration are fitted before validation. Model selection uses validation data only. Final-test outcomes are reported for the frozen candidates and must not be used to choose the winner or tune later versions. Results are evidence for these seasons and methods, not a guarantee about future games.</li>
+        <li><strong>Data checks:</strong> the run stops if game fields are invalid, a game is duplicated within a season/week, or any model produces an invalid three-way probability vector.</li>
       </ul>
       <p class="source-line">Data: <a href="https://github.com/nflverse/nfldata" target="_blank" rel="noreferrer">nflverse/nfldata</a> · <a href="https://github.com/nflverse/nflverse-data" target="_blank" rel="noreferrer">nflverse data releases</a></p>
     </section>
   </main>
 
   <footer><span>NFL PREDICTION RESEARCH</span><span>Historical analysis only · no live ratings changed</span></footer>
-  <script type="module" src="./historical-tester.js?v=nfl-prediction-lab-2"></script>
+  <script type="module" src="./historical-tester.js?v=nfl-prediction-lab-7"></script>
 </body>
 </html>

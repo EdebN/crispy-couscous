@@ -168,10 +168,12 @@ Acceptance criteria:
 
 ### Mathematical starting point for the score model
 
-Use a log-link so expected points stay positive. Let (o_{i,t}) be team (i)'s latent offensive strength, (d_{i,t}) its defensive strength (positive means it suppresses the opponent), (\mu_H) and (\mu_A) the league home/away scoring baselines, and (h) the home effect:
+Use a log-link so expected points stay positive. Let `o[i,t]` be team i's latent offensive strength, `d[i,t]` its defensive strength (positive means it suppresses the opponent), `mu_H` and `mu_A` the league home/away scoring baselines, and `h` the home effect:
 
-- (\log \lambda_H = \mu_H + h + o_{H,t} - d_{A,t})
-- (\log \lambda_A = \mu_A + o_{A,t} - d_{H,t})
+```text
+log(lambda_home) = mu_H + h + offense[home] - defense[away]
+log(lambda_away) = mu_A     + offense[away] - defense[home]
+```
 
 These are expected-score predictors, not yet the final outcome probabilities. Centre team effects around zero and shrink them toward zero when evidence is sparse; otherwise the model can mistake two early blowouts for a team's permanent identity.
 
@@ -181,12 +183,12 @@ This online update is an engineering baseline, not a claim that one gradient ste
 
 ### Candidate score distributions and training protocol
 
-1. **Reference:** independent Poisson (P(H=h,A=a)=\operatorname{Pois}(h;\lambda_H)\operatorname{Pois}(a;\lambda_A)).
+1. **Reference:** independent Poisson, where `P(H=h, A=a) = Pois(h; lambda_home) * Pois(a; lambda_away)`.
 2. **Overdispersion candidate:** use a negative-binomial or another non-negative count distribution with a dispersion parameter estimated from training scores. Compare score log likelihood and outcome metrics, not just visual fit.
 3. **NFL-aware candidate:** estimate a smoothed discrete residual/score distribution from warm-up history, conditional on predicted scoring level and matchup strength. Preserve empirical mass around plausible scoring totals and key margins. Use shrinkage so rare score pairs do not receive unstable probabilities.
 4. **Joint dependence candidate:** only if residual diagnostics and validation support it, add a shared latent pace/game-state term or a smoothed margin adjustment. Any adjustment must preserve non-negative probabilities and normalise the full score grid.
 
-For a grid (h,a \in \{0,1,\ldots,K\}), calculate each joint cell, include or bound the tail beyond (K), and normalise only when the omitted tail is demonstrably negligible or explicitly accounted for. Then aggregate cells into home win, tie, and away win. Check both score distributions and the margin distribution; matching outcome accuracy while generating implausible scores is not sufficient.
+For a grid where both scores range from 0 to K, calculate each joint cell, include or bound the tail beyond K, and normalise only when the omitted tail is demonstrably negligible or explicitly accounted for. Then aggregate cells into home win, tie, and away win. Check both score distributions and the margin distribution; matching outcome accuracy while generating implausible scores is not sufficient.
 
 **Training boundary:** fit global parameters and distributional smoothing using warm-up seasons. During validation and test, keep those global parameters frozen, but update team states only with completed earlier games. Select hyperparameters and any calibrator on validation. Final-test data is for one frozen evaluation only.
 

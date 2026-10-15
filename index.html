@@ -26,11 +26,12 @@
 
     <section class="panel">
       <div class="section-heading">
-        <div><h2>Model comparison</h2><p>Every game is predicted before its week's results update any model. No parameter sweep or equation optimisation.</p></div>
+        <div><h2>Model comparison</h2><p>Every game is predicted before its week's results update any model. Includes a restrained recent-form signal, without a parameter sweep or equation optimisation.</p></div>
         <span class="status" id="runStatus">READY</span>
       </div>
       <div class="model-grid">
         <article><h3>Glicko-2</h3><p>Tracks team strength and uncertainty in ratings. Uses a fixed home-field adjustment.</p></article>
+        <article><h3>Glicko-2 + recent form</h3><p>Combines long-run team strength with a capped, recency-weighted signal from recent scoring margins. Older games count less, and short histories are shrunk toward average.</p></article>
         <article><h3>Elo</h3><p>A simpler rating baseline with a fixed update rate and home-field adjustment.</p></article>
         <article><h3>Poisson scores</h3><p>Estimates each team's points from its historical scoring and conceding averages, then sums scoreline probabilities.</p></article>
         <article><h3>Points differential</h3><p>Uses past scoring margins to estimate a team's strength and convert the expected margin into outcome probabilities.</p></article>
@@ -71,6 +72,7 @@
         <li><strong>Brier score:</strong> multiclass squared probability error; lower is better.</li>
         <li><strong>Log loss:</strong> penalises assigning very low probability to the result that actually happened; lower is better.</li>
         <li><strong>Accuracy:</strong> percentage of correct outcome picks. It does not measure probability calibration.</li>
+        <li><strong>Recent form:</strong> the form-adjusted Glicko model uses each team’s latest 12 neutralised scoring margins, with older games down-weighted and short histories shrunk toward zero. Its adjustment is capped to prevent a few unusual scores from overpowering the rating.</li>
         <li><strong>Poisson caveat:</strong> NFL scoring is discrete and shaped by touchdowns, field goals, and conversions. The Poisson model is a useful benchmark, not an assumption that football scores literally follow a Poisson process.</li>
         <li><strong>No tuning on the test set:</strong> model settings are fixed in advance. Results are evidence for these seasons and methods, not a guarantee about future games.</li>
       </ul>

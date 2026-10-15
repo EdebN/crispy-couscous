@@ -7,7 +7,7 @@ const CENTER = 1500;
 const SCALE = 173.7178;
 const TAU = 0.5;
 const EPS = 1e-6;
-const BASE_MODEL_NAMES = ["Glicko-2", "Glicko-2 + recent form", "Elo", "Poisson scores", "Points differential", "Home-rate baseline"];
+const BASE_MODEL_NAMES = ["Glicko-2", "Glicko-2 + recent form", "Elo", "Poisson scores", "Points differential", "Home-rate baseline", "Neural network"];
 const CALIBRATED_NAMES = BASE_MODEL_NAMES.map(name => name + " · temperature-calibrated");
 const MODEL_NAMES = [...BASE_MODEL_NAMES, ...CALIBRATED_NAMES];
 const $ = id => document.getElementById(id);
@@ -212,6 +212,84 @@ function updateGlickoPeriod(states, periodGames) {
   }
 }
 
+function softmax3(logits) {
+  const maxLogit = Math.max(...logits);
+  const exps = logits.map(value => Math.exp(value - maxLogit));
+  const total = exps.reduce((sum, value) => sum + value, 0);
+  return exps.map(value => value / total);
+}
+
+function seededRandom(seed = 20261015) {
+  let state = seed >>> 0;
+  return () => {
+    state = (1664525 * state + 1013904223) >>> 0;
+    return state / 4294967296;
+  };
+}
+
+function trainNeuralNetwork(rows) {
+  if (rows.length < 500) throw new Error("The neural-network candidate needs at least 500 warm-up games.");
+  const inputSize = rows[0].features.length, hiddenSize = 10, outputSize = 3;
+  const random = seededRandom();
+  const w1 = Array.from({ length: hiddenSize }, () => Array.from({ length: inputSize }, () => (random() * 2 - 1) * Math.sqrt(2 / inputSize)));
+  const b1 = Array(hiddenSize).fill(0);
+  const w2 = Array.from({ length: outputSize }, () => Array.from({ length: hiddenSize }, () => (random() * 2 - 1) * Math.sqrt(2 / hiddenSize)));
+  const counts = [0, 0, 0];
+  for (const row of rows) counts[row.actual === "home" ? 0 : row.actual === "draw" ? 1 : 2]++;
+  const b2 = counts.map(count => Math.log((count + 1) / (rows.length + outputSize)));
+  const rate = 0.012, l2 = 0.0015, batchSize = 32, epochs = 45;
+
+  function forward(features) {
+    const hidden = b1.map((bias, j) => Math.tanh(bias + w1[j].reduce((sum, weight, k) => sum + weight * features[k], 0)));
+    const probabilities = softmax3(b2.map((bias, c) => bias + w2[c].reduce((sum, weight, j) => sum + weight * hidden[j], 0)));
+    return { hidden, probabilities };
+  }
+
+  for (let epoch = 0; epoch < epochs; epoch++) {
+    const order = rows.map((_, index) => index);
+    // Deterministic shuffle: reproducible runs, but batches do not always see the same ordering.
+    for (let i = order.length - 1; i > 0; i--) {
+      const j = Math.floor(random() * (i + 1));
+      [order[i], order[j]] = [order[j], order[i]];
+    }
+    for (let start = 0; start < order.length; start += batchSize) {
+      const gw1 = Array.from({ length: hiddenSize }, () => Array(inputSize).fill(0));
+      const gb1 = Array(hiddenSize).fill(0);
+      const gw2 = Array.from({ length: outputSize }, () => Array(hiddenSize).fill(0));
+      const gb2 = Array(outputSize).fill(0);
+      const end = Math.min(order.length, start + batchSize), size = end - start;
+      for (let index = start; index < end; index++) {
+        const row = rows[order[index]], target = row.actual === "home" ? 0 : row.actual === "draw" ? 1 : 2;
+        const { hidden, probabilities } = forward(row.features);
+        const deltaOut = probabilities.map((p, c) => p - (c === target ? 1 : 0));
+        for (let c = 0; c < outputSize; c++) {
+          gb2[c] += deltaOut[c];
+          for (let j = 0; j < hiddenSize; j++) gw2[c][j] += deltaOut[c] * hidden[j];
+        }
+        for (let j = 0; j < hiddenSize; j++) {
+          let back = 0;
+          for (let c = 0; c < outputSize; c++) back += deltaOut[c] * w2[c][j];
+          const deltaHidden = back * (1 - hidden[j] * hidden[j]);
+          gb1[j] += deltaHidden;
+          for (let k = 0; k < inputSize; k++) gw1[j][k] += deltaHidden * row.features[k];
+        }
+      }
+      for (let j = 0; j < hiddenSize; j++) {
+        b1[j] -= rate * gb1[j] / size;
+        for (let k = 0; k < inputSize; k++) w1[j][k] -= rate * (gw1[j][k] / size + l2 * w1[j][k]);
+      }
+      for (let c = 0; c < outputSize; c++) {
+        b2[c] -= rate * gb2[c] / size;
+        for (let j = 0; j < hiddenSize; j++) w2[c][j] -= rate * (gw2[c][j] / size + l2 * w2[c][j]);
+      }
+    }
+  }
+  return features => {
+    const p = forward(features).probabilities;
+    return { home: p[0], draw: p[1], away: p[2] };
+  };
+}
+
 function evaluate(records, splitName) {
   const subset = records.filter(r => r.split === splitName);
   if (!subset.length) return { games: 0, brier: NaN, logLoss: NaN, accuracy: NaN };
@@ -288,15 +366,35 @@ function runExperiment(data) {
       const expectedMargin = homeStrength - awayStrength + (Number.isFinite(homeAdv) ? homeAdv : 2.5);
       const pMargin = logistic(expectedMargin / 6.5);
       const baselineHome = (history.homeWins + 28.5) / (history.homeWins + history.awayWins + 50);
+      const homeForm = recentForm(recentMargins.get(game.home));
+      const awayForm = recentForm(recentMargins.get(game.away));
       const p = {
         "Glicko-2": glickoForecast(gh, ga, dRate),
-        "Glicko-2 + recent form": recentFormGlickoForecast(gh, ga, dRate, recentForm(recentMargins.get(game.home)), recentForm(recentMargins.get(game.away))),
+        "Glicko-2 + recent form": recentFormGlickoForecast(gh, ga, dRate, homeForm, awayForm),
         "Elo": eloForecast(eh, ea, dRate),
         "Poisson scores": poissonOutcome(lambdaHome, lambdaAway),
         "Points differential": threeWayFromHomeWin(pMargin, dRate),
         "Home-rate baseline": threeWayFromHomeWin(baselineHome, dRate)
       };
-      for (const name of BASE_MODEL_NAMES) assertProbabilityVector(p[name], name, game);
+      const neuralFeatures = [
+        (gh.rating - ga.rating) / 400,
+        (eh - ea) / 400,
+        (homeStrength - awayStrength) / 15,
+        (homeForm - awayForm) / 15,
+        (Number.isFinite(homeAdv) ? homeAdv : 2.5) / 10,
+        (gh.rd + ga.rd) / 700,
+        (homeOff - leagueHomeMean) / 15,
+        (awayDef - leagueHomeMean) / 15,
+        (awayOff - leagueAwayMean) / 15,
+        (homeDef - leagueAwayMean) / 15,
+        Math.log1p(sh.homeN) / 3,
+        Math.log1p(sa.awayN) / 3,
+        Math.log1p(sh.marginN) / 3,
+        Math.log1p(sa.marginN) / 3,
+        dRate / 0.05
+      ];
+      neuralRows.push({ features: neuralFeatures, actual: resultClass(game), split: splitName, season: game.season, week: game.week });
+      for (const name of BASE_MODEL_NAMES.filter(name => name !== "Neural network")) assertProbabilityVector(p[name], name, game);
       if (splitName !== "warmup") {
         for (const name of BASE_MODEL_NAMES) records.push({ model: name, split: splitName, p: p[name], actual: resultClass(game), season: game.season, week: game.week });
       }
@@ -332,6 +430,16 @@ function runExperiment(data) {
       else history.draws++;
     }
   }
+  // Fit the network only on early warm-up seasons. Its weights remain frozen during validation and test.
+  const neuralTrainingRows = neuralRows.filter(row => split.warmup.has(row.season));
+  const neuralPredict = trainNeuralNetwork(neuralTrainingRows);
+  for (const row of neuralRows.filter(row => !split.warmup.has(row.season))) {
+    const p = neuralPredict(row.features);
+    const game = { season: row.season, week: row.week, home: "home team", away: "away team" };
+    assertProbabilityVector(p, "Neural network", game);
+    records.push({ model: "Neural network", split: row.split, p, actual: row.actual, season: row.season, week: row.week });
+  }
+
   const temperatures = {};
   for (const name of BASE_MODEL_NAMES) {
     const validationRows = records.filter(r => r.model === name && r.split === "validation");

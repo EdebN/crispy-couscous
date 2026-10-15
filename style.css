@@ -413,3 +413,10 @@ footer {
 #historicalNFL .table-wrap {
   margin-top: 16px;
 }
+
+.upload-row{display:grid;grid-template-columns:minmax(220px,.8fr) minmax(280px,1.5fr);gap:16px;align-items:end;margin:18px 0;padding:16px;border:1px solid var(--border);border-radius:8px;background:#0c1018}
+.upload-row input[type=file]{display:block;width:100%;margin-top:8px;color:var(--muted);font:inherit;font-size:12px}
+.upload-help{margin:0;color:var(--muted);font-size:12px;line-height:1.7}
+#constantSweep .table-wrap{margin-top:16px}
+#constantSweep td:first-child{min-width:130px}
+@media(max-width:800px){.upload-row{grid-template-columns:1fr}}

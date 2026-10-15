@@ -396,7 +396,7 @@ function runExperiment(data) {
       neuralRows.push({ features: neuralFeatures, actual: resultClass(game), split: splitName, season: game.season, week: game.week });
       for (const name of BASE_MODEL_NAMES.filter(name => name !== "Neural network")) assertProbabilityVector(p[name], name, game);
       if (splitName !== "warmup") {
-        for (const name of BASE_MODEL_NAMES) records.push({ model: name, split: splitName, p: p[name], actual: resultClass(game), season: game.season, week: game.week });
+        for (const name of BASE_MODEL_NAMES.filter(name => name !== "Neural network")) records.push({ model: name, split: splitName, p: p[name], actual: resultClass(game), season: game.season, week: game.week });
       }
     }
     // Update only after every game in this week has been forecast.

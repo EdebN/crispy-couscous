@@ -43,6 +43,15 @@
       <p class="warning">The search ranks settings using validation seasons only. MOVDA fits its expected-margin curve on earlier training seasons and selects its margin weight on validation seasons. Later final-test seasons are not used to select the winner. This reduces tuning bias, but does not replace testing on a genuinely separate competition.</p>
     </section>
 
+    <section class="panel" id="formulaBakeoff">
+      <div class="section-heading"><div><h2>Formula bake-off</h2><p>Compare the current formula, optimised custom Glicko, established baselines, four hybrids, and eight additional update families on the same historical matches.</p></div><span class="status" id="formulaStatus">READY</span></div>
+      <p id="formulaMeta" class="subtitle">Parameter grids are selected using validation seasons. Final-test results are reported separately and must not be used to select constants.</p>
+      <div class="button-row"><button id="runFormulaBtn" class="primary">Test all formula families</button></div>
+      <div class="table-wrap"><table><thead><tr><th>Validation rank</th><th>Formula family</th><th>Selected parameters</th><th>Validation Brier</th><th>Validation log loss</th><th>Final-test Brier</th><th>Final-test log loss</th><th>Final-test accuracy</th><th>Test games</th></tr></thead><tbody id="formulaResultsBody"><tr><td colspan="9" class="empty">No bake-off run yet.</td></tr></tbody></table></div>
+      <p id="formulaVerdict" class="verdict">The incumbent remains the reference. A candidate should beat it on proper scoring metrics across multiple chronological windows before promotion.</p>
+      <p class="warning">This bake-off evaluates a single chronological validation/test split. The margin-category model is an ordinal-likelihood-inspired update, not a full independently fitted probabilistic margin model. Formula families share the same Glicko probability forecast unless they are explicitly Elo-based, so the main comparison is their rating-update rule.</p>
+    </section>
+
     <section class="panel">
       <div class="section-heading">
         <div>

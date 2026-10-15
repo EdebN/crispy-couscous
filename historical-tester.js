@@ -663,7 +663,8 @@ function renderResults(output) {
   const testSeasons = [...output.split.test].sort((a, b) => a - b);
   const validationSeasons = [...output.split.validation].sort((a, b) => a - b);
   const calibrationSeasons = [...output.split.calibration].sort((a, b) => a - b);
-  $("verdict").textContent = `Selected using validation log loss only: ${selected.name} (validation log loss ${fmt(v.validation.logLoss)}). Its held-out test result: log loss ${fmt(v.test.logLoss)}, Brier ${fmt(v.test.brier)}, accuracy ${fmt(v.test.accuracy * 100, 1)}%. Temperature fitting holdout: ${calibrationSeasons[0]}–${calibrationSeasons.at(-1)}; validation: ${validationSeasons[0]}–${validationSeasons.at(-1)}; final test: ${testSeasons[0]}–${testSeasons.at(-1)}. Test results are confirmation, not a model-selection signal.`;
+  const ensembleDetail = selected.name === ENSEMBLE_NAMES[0] ? ` Blend weight: ${fmt(output.ensembleWeights[selected.name], 2)} neural, ${fmt(1 - output.ensembleWeights[selected.name], 2)} Glicko-form.` : "";
+  $("verdict").textContent = `Selected using validation log loss only: ${selected.name} (validation log loss ${fmt(v.validation.logLoss)}).${ensembleDetail} Its held-out test result: log loss ${fmt(v.test.logLoss)}, Brier ${fmt(v.test.brier)}, accuracy ${fmt(v.test.accuracy * 100, 1)}%. Temperature/ensemble fitting holdout: ${calibrationSeasons[0]}–${calibrationSeasons.at(-1)}; validation: ${validationSeasons[0]}–${validationSeasons.at(-1)}; final test: ${testSeasons[0]}–${testSeasons.at(-1)}. Test results are confirmation, not a model-selection signal.`;
   const select = $("calibrationModel");
   select.innerHTML = MODEL_NAMES.map(name => `<option value="${name}">${name}</option>`).join("");
   select.disabled = false;

@@ -68,6 +68,30 @@ function splitSeasons(data) {
   };
 }
 
+function validateGames(data) {
+  if (!Array.isArray(data) || data.length === 0) throw new Error("No usable games were supplied to the backtest.");
+  const seen = new Set();
+  for (const game of data) {
+    if (!Number.isInteger(game.season) || !Number.isInteger(game.week) ||
+        !game.home || !game.away || game.home === game.away ||
+        !Number.isFinite(game.hs) || !Number.isFinite(game.as)) {
+      throw new Error("The dataset contains a game with invalid season, week, team, or score fields.");
+    }
+    const key = [game.season, game.week, game.home, game.away].join("|");
+    if (seen.has(key)) throw new Error(`Duplicate game detected: ${key}. Backtest stopped to prevent double-counting.`);
+    seen.add(key);
+  }
+  return true;
+}
+
+function assertProbabilityVector(p, modelName, game) {
+  const values = [p.home, p.draw, p.away];
+  if (values.some(value => !Number.isFinite(value) || value < 0 || value > 1) ||
+      Math.abs(values.reduce((sum, value) => sum + value, 0) - 1) > 1e-8) {
+    throw new Error(`Invalid probability vector from ${modelName} for ${game.season} week ${game.week} (${game.home} vs ${game.away}).`);
+  }
+}
+
 function makeTeams(data) {
   return [...new Set(data.flatMap(g => [g.home, g.away]))].sort();
 }
@@ -224,6 +248,7 @@ function fitTemperature(records) {
 }
 
 function runExperiment(data) {
+  validateGames(data);
   const split = splitSeasons(data), teams = makeTeams(data);
   const glicko = new Map(teams.map(t => [t, freshGlicko()]));
   const elo = new Map(teams.map(t => [t, CENTER]));
@@ -271,6 +296,7 @@ function runExperiment(data) {
         "Points differential": threeWayFromHomeWin(pMargin, dRate),
         "Home-rate baseline": threeWayFromHomeWin(baselineHome, dRate)
       };
+      for (const name of BASE_MODEL_NAMES) assertProbabilityVector(p[name], name, game);
       if (splitName !== "warmup") {
         for (const name of BASE_MODEL_NAMES) records.push({ model: name, split: splitName, p: p[name], actual: resultClass(game), season: game.season, week: game.week });
       }
@@ -343,19 +369,28 @@ function runExperiment(data) {
 function renderResults(output) {
   const tbody = $("resultsBody");
   const rows = MODEL_NAMES.map(name => ({ name, ...output.result[name] }));
-  rows.sort((a, b) => a.test.logLoss - b.test.logLoss);
-  const best = rows[0]?.name;
-  tbody.innerHTML = rows.map(r => `<tr class="${r.name === best ? "best" : ""}">
-    <td>${r.name}</td>
+  const selected = BASE_MODEL_NAMES
+    .map(name => ({ name, ...output.result[name] }))
+    .sort((a, b) => a.validation.logLoss - b.validation.logLoss)[0];
+  rows.sort((a, b) => {
+    const aCalibrated = a.name.endsWith(" · temperature-calibrated");
+    const bCalibrated = b.name.endsWith(" · temperature-calibrated");
+    if (aCalibrated !== bCalibrated) return aCalibrated ? 1 : -1;
+    return a.validation.logLoss - b.validation.logLoss;
+  });
+  tbody.innerHTML = rows.map(r => `<tr class="${r.name === selected.name ? "best" : ""}">
+    <td>${r.name}${r.name === selected.name ? " · validation leader" : ""}</td>
     <td>${fmt(r.validation.brier)}</td><td>${fmt(r.validation.logLoss)}</td><td>${fmt(r.validation.accuracy * 100, 1)}%</td>
     <td>${fmt(r.test.brier)}</td><td>${fmt(r.test.logLoss)}</td><td>${fmt(r.test.accuracy * 100, 1)}%</td><td>${r.test.games.toLocaleString()}</td>
   </tr>`).join("");
-  const v = output.result[best];
-  $("verdict").textContent = `Lowest final-test log loss in this run: ${best} (log loss ${fmt(v.test.logLoss)}, Brier ${fmt(v.test.brier)}, accuracy ${fmt(v.test.accuracy * 100, 1)}%). This is a result for the held-out seasons, not proof that the method is universally best.`;
+  const v = output.result[selected.name];
+  const testSeasons = [...output.split.test].sort((a, b) => a - b);
+  const validationSeasons = [...output.split.validation].sort((a, b) => a - b);
+  $("verdict").textContent = `Selected using validation log loss only: ${selected.name} (validation log loss ${fmt(v.validation.logLoss)}). Its held-out test result: log loss ${fmt(v.test.logLoss)}, Brier ${fmt(v.test.brier)}, accuracy ${fmt(v.test.accuracy * 100, 1)}%. Validation seasons: ${validationSeasons[0]}–${validationSeasons.at(-1)}; final test seasons: ${testSeasons[0]}–${testSeasons.at(-1)}. Test results are confirmation, not a model-selection signal.`;
   const select = $("calibrationModel");
   select.innerHTML = MODEL_NAMES.map(name => `<option value="${name}">${name}</option>`).join("");
   select.disabled = false;
-  select.value = best;
+  select.value = selected.name;
   lastResultRows = output.records;
   renderCalibration();
 }
@@ -383,6 +418,7 @@ async function loadData() {
     if (!response.ok) throw new Error(`Data request failed (HTTP ${response.status}).`);
     games = parseGames(await response.text());
     if (!games.length) throw new Error("The data loaded, but no completed regular-season games were recognised.");
+    validateGames(games);
     const split = splitSeasons(games);
     $("gamesMetric").textContent = games.length.toLocaleString();
     $("seasonsMetric").textContent = `${split.seasons[0]}–${split.seasons.at(-1)} · ${split.seasons.length} seasons`;

@@ -1,84 +1,359 @@
 "use strict";
-const CFG={url:"https://raw.githubusercontent.com/nflverse/nfldata/master/data/games.csv",center:1000,scale:173.7178,rd:150,sigma:.06,tau:.5,maxRD:350,eps:1e-6,eloK:20};
-const $=id=>document.getElementById(id), clamp=(x,a,b)=>Math.max(a,Math.min(b,x));
-let busy=false;
-const mu=r=>(r-CFG.center)/CFG.scale, rate=m=>CFG.center+CFG.scale*m, phi=r=>r/CFG.scale, rd=p=>CFG.scale*p;
-const g=p=>1/Math.sqrt(1+3*p*p/(Math.PI*Math.PI));
-function logistic(x){if(x>=0)return 1/(1+Math.exp(-x));const e=Math.exp(x);return e/(1+e)}
-function probs(a,b,d,elo=false){const p=elo?1/(1+Math.pow(10,(b.rating-a.rating)/400)):logistic(g(phi(b.rd))*(mu(a.rating)-mu(b.rating)));return{win:(1-d)*p,draw:d,loss:(1-d)*(1-p)}}
-function weight(margin,wr,lr,c,o={}){if(margin===0)return 1;const scale=o.marginScale??2.2,base=o.denominatorBase??2.2,sensitivity=o.gapSensitivity??.001,cap=o.maxWeight??3,floor=o.denominatorFloor??.25,rawDen=base+sensitivity*(wr-lr),den=Math.max(floor,rawDen);if(rawDen<floor)c.denominatorGuards++;const raw=Math.log(Math.max(0,margin)+1)*scale/den,w=clamp(raw,0,cap);if(w!==raw)c.weightClamps++;return w}
-function fitMOVDA(games,trainBeforeSeason,seasonConfig={}){
- const ratings=new Map([...new Set(games.flatMap(x=>[x.home,x.away]))].map(t=>[t,CFG.center])),samples=[],deltas=new Map();let lastSeason=null,key=null,pending=[];
- function flush(){if(!pending.length)return;const frozen=new Map(ratings);for(const x of pending){if(x.season<trainBeforeSeason)samples.push({diff:frozen.get(x.home)-frozen.get(x.away),margin:x.hs-x.as});const y=x.hs>x.as?1:x.hs<x.as?0:.5,e=1/(1+Math.pow(10,(frozen.get(x.away)-frozen.get(x.home))/400)),d=CFG.eloK*(y-e);deltas.set(x.home,(deltas.get(x.home)||0)+d);deltas.set(x.away,(deltas.get(x.away)||0)-d)}for(const[t,d]of deltas)ratings.set(t,frozen.get(t)+d);deltas.clear();pending=[]}
- for(const x of games){if(lastSeason!==null&&x.season!==lastSeason){flush();const retain=clamp(seasonConfig.retention??1,0,1);for(const[t,r]of ratings)ratings.set(t,CFG.center+retain*(r-CFG.center));key=null}lastSeason=x.season;const k=x.season+"-"+x.week;if(key!==null&&k!==key)flush();key=k;pending.push(x)}flush();
- if(samples.length<30)throw Error("MOVDA needs at least 30 training games before the validation period.");
- let best={alpha:14,beta:200,homeAdv:2.5,sse:Infinity};
- for(const alpha of [4,6,8,10,12,14,16,18,20,22,24,26,28])
-  for(const beta of [50,75,100,125,150,175,200,225,250,300,350,400,450,500])
-   for(const homeAdv of [-1,0,1,2,3,4,5,6]){
-    let sse=0;for(const x of samples){const e=alpha*Math.tanh(x.diff/beta)+homeAdv,d=x.margin-e;sse+=d*d}
-    if(sse<best.sse)best={alpha,beta,homeAdv,sse};
-   }
- return {...best,trainingGames:samples.length,rmse:Math.sqrt(best.sse/samples.length)};
+
+const DATA_URL = "https://raw.githubusercontent.com/nflverse/nfldata/master/data/games.csv";
+const CURRENT_YEAR = new Date().getFullYear();
+const LAST_COMPLETE_SEASON = CURRENT_YEAR - 1;
+const CENTER = 1500;
+const SCALE = 173.7178;
+const TAU = 0.5;
+const EPS = 1e-6;
+const MODEL_NAMES = ["Glicko-2", "Elo", "Poisson scores", "Points differential", "Home-rate baseline"];
+const $ = id => document.getElementById(id);
+const clamp = (x, lo, hi) => Math.max(lo, Math.min(hi, x));
+const logistic = x => x >= 0 ? 1 / (1 + Math.exp(-x)) : Math.exp(x) / (1 + Math.exp(x));
+let games = [];
+let lastResultRows = [];
+let busy = false;
+
+function parseCSV(text) {
+  const rows = [];
+  let row = [], cell = "", quoted = false;
+  for (let i = 0; i < text.length; i++) {
+    const ch = text[i];
+    if (ch === '"' && quoted && text[i + 1] === '"') { cell += '"'; i++; }
+    else if (ch === '"') quoted = !quoted;
+    else if (ch === "," && !quoted) { row.push(cell); cell = ""; }
+    else if ((ch === "\n" || ch === "\r") && !quoted) {
+      if (ch === "\r" && text[i + 1] === "\n") i++;
+      row.push(cell); cell = "";
+      if (row.some(v => v !== "")) rows.push(row);
+      row = [];
+    } else cell += ch;
+  }
+  if (cell !== "" || row.length) { row.push(cell); rows.push(row); }
+  if (!rows.length) return [];
+  const headers = rows.shift().map(v => v.trim());
+  return rows.map(values => Object.fromEntries(headers.map((h, i) => [h, (values[i] ?? "").trim()])));
 }
 
-const TS={beta:75};
-function normalPDF(x){return Math.exp(-.5*x*x)/Math.sqrt(2*Math.PI)}
-function normalCDF(x){const z=Math.abs(x),t=1/(1+.2316419*z),d=.3989422804014327*Math.exp(-z*z/2),p=1-d*t*(.319381530+t*(-.356563782+t*(1.781477937+t*(-1.821255978+t*1.330274429))));return x>=0?p:1-p}
-function inverseNormal(p){p=clamp(p,1e-12,1-1e-12);const a=[-39.6968302866538,220.946098424521,-275.928510446969,138.357751867269,-30.6647980661472,2.50662827745924],b=[-54.4760987982241,161.585836858041,-155.698979859887,66.8013118877197,-13.2806815528857],c=[-.00778489400243029,-.322396458041136,-2.40075827716184,-2.54973253934373,4.37466414146497,2.93816398269878],d=[.00778469570904146,.32246712907004,2.445134137143,3.75440866190742];let q,r;if(p<.02425){q=Math.sqrt(-2*Math.log(p));return (((((c[0]*q+c[1])*q+c[2])*q+c[3])*q+c[4])*q+c[5])/((((d[0]*q+d[1])*q+d[2])*q+d[3])*q+1)}if(p>1-.02425){q=Math.sqrt(-2*Math.log(1-p));return -(((((c[0]*q+c[1])*q+c[2])*q+c[3])*q+c[4])*q+c[5])/((((d[0]*q+d[1])*q+d[2])*q+d[3])*q+1)}q=p-.5;r=q*q;return (((((a[0]*r+a[1])*r+a[2])*r+a[3])*r+a[4])*r+a[5])*q/(((((b[0]*r+b[1])*r+b[2])*r+b[3])*r+b[4])*r+1)}
-function trueSkillProbs(a,b,drawP){const c=Math.sqrt(a.rd*a.rd+b.rd*b.rd+2*TS.beta*TS.beta),delta=a.rating-b.rating,eps=inverseNormal((1+drawP)/2)*Math.sqrt(2)*TS.beta,win=1-normalCDF((eps-delta)/c),loss=normalCDF((-eps-delta)/c);return{win:clamp(win,0,1),draw:clamp(1-win-loss,0,1),loss:clamp(loss,0,1)}}
-function trueSkillEvidence(a,b,y,drawP){const c=Math.sqrt(a.rd*a.rd+b.rd*b.rd+2*TS.beta*TS.beta),delta=a.rating-b.rating,eps=inverseNormal((1+drawP)/2)*Math.sqrt(2)*TS.beta,sign=y===1?1:y===0?-1:0;let v,w;if(sign){const z=(sign*delta-eps)/c,den=Math.max(1e-15,normalCDF(z));v=normalPDF(z)/den;w=v*(v+z)}else{const lo=(-eps-delta)/c,hi=(eps-delta)/c,den=Math.max(1e-15,normalCDF(hi)-normalCDF(lo));v=(normalPDF(lo)-normalPDF(hi))/den;w=v*v+(hi*normalPDF(hi)-lo*normalPDF(lo))/den}const direction=y===1?1:y===0?-1:1;let va,vb;if(y===.5){va=a.rd*a.rd/c*v;vb=-b.rd*b.rd/c*v}else{va=direction*a.rd*a.rd/c*v;vb=-direction*b.rd*b.rd/c*v}return{da:va,db:vb,fa:Math.sqrt(Math.max(.05,1-a.rd*a.rd/(c*c)*w)),fb:Math.sqrt(Math.max(.05,1-b.rd*b.rd/(c*c)*w))}}
-function sigmaUpdate(p,s,delta,v,tau){const a=Math.log(s*s),f=x=>{const e=Math.exp(x);return e*(delta*delta-p*p-v-e)/(2*Math.pow(p*p+v+e,2))-(x-a)/(tau*tau)};let A=a,B;if(delta*delta>p*p+v)B=Math.log(delta*delta-p*p-v);else{let k=1;while(f(a-k*tau)<0&&k<100)k++;B=a-k*tau}let fA=f(A),fB=f(B);for(let i=0;Math.abs(B-A)>CFG.eps&&i<100;i++){const den=fB-fA;if(Math.abs(den)<1e-15)break;const C=A+(A-B)*fA/den,fC=f(C);if(!Number.isFinite(fC))break;if(fC*fB<0){A=B;fA=fB}else fA/=2;B=C;fB=fC}return Math.exp(A/2)}
-function update(p,results,d,weighted){const m=mu(p.rating),ph=phi(p.rd),s=p.volatility;if(!results.length)return{...p,rd:Math.min(CFG.maxRD,rd(Math.sqrt(ph*ph+s*s)))};let vs=0,rs=0;for(const x of results){const opm=mu(x.op.rating),opp=phi(x.op.rd),gj=g(opp),ex=(1-d)*logistic(gj*(m-opm))+.5*d;vs+=gj*gj*ex*(1-ex);rs+=gj*((weighted?x.w:1)*(x.score-ex)+(x.extra||0))}if(!(vs>0)||!Number.isFinite(vs))return{...p};const v=1/vs,del=v*rs,ns=sigmaUpdate(ph,s,del,v,CFG.tau),star=Math.sqrt(ph*ph+ns*ns),np=1/Math.sqrt(1/(star*star)+1/v);return{rating:rate(m+np*np*rs),rd:Math.min(CFG.maxRD,rd(np)),volatility:ns}}
-function csvRows(s){const out=[];let row=[],cell="",q=false;for(let i=0;i<s.length;i++){const c=s[i];if(c==='"'&&q&&s[i+1]==='"'){cell+='"';i++}else if(c==='"')q=!q;else if(c===","&&!q){row.push(cell);cell=""}else if((c==="\n"||c==="\r")&&!q){if(c==="\r"&&s[i+1]==="\n")i++;row.push(cell);cell="";if(row.some(x=>x!==""))out.push(row);row=[]}else cell+=c}if(cell||row.length){row.push(cell);out.push(row)}return out}
-function parse(s){const rows=csvRows(s),h=rows.shift().map(x=>x.trim()),ix=Object.fromEntries(h.map((x,i)=>[x,i])),out=[];for(const r of rows){const get=k=>(r[ix[k]]||"").trim(),season=+get("season"),week=+get("week"),home=get("home_team"),away=get("away_team"),hsText=get("home_score"),asText=get("away_score"),hs=+hsText,as=+asText,date=get("gameday")||get("game_date");if(season>=1999&&get("game_type")==="REG"&&Number.isFinite(week)&&home&&away&&hsText!==""&&asText!==""&&Number.isFinite(hs)&&Number.isFinite(as)&&date)out.push({season,week,date,home,away,hs,as,margin:Math.abs(hs-as)})}return out.sort((a,b)=>a.season-b.season||a.week-b.week||a.date.localeCompare(b.date))}
-function newMetrics(){return{brier:0,loss:0,correct:0,n:0,bins:Array.from({length:10},()=>({p:0,y:0,n:0}))}}
-function score(m,p,y,enabled=true){if(!enabled)return;const actual=y===1?[1,0,0]:y===.5?[0,1,0]:[0,0,1],pred=[p.win,p.draw,p.loss];for(let i=0;i<3;i++)m.brier+=(pred[i]-actual[i])**2;m.loss-=Math.log(Math.max(1e-15,pred[y===1?0:y===.5?1:2]));if(pred.indexOf(Math.max(...pred))===(y===1?0:y===.5?1:2))m.correct++;const b=m.bins[Math.min(9,Math.floor(p.win*10))];b.p+=p.win;b.y+=actual[0];b.n++;m.n++}
-function run(games,kind,opts={}){const teams=[...new Set(games.flatMap(x=>[x.home,x.away]))],players=new Map(teams.map(t=>[t,{rating:CFG.center,rd:CFG.rd,volatility:CFG.sigma}])),elos=new Map(teams.map(t=>[t,CFG.center])),m=newMetrics(),c={denominatorGuards:0,weightClamps:0};let prior=0,draws=0,key=null,pending=[],lastSeason=null;
-function flush(){if(!pending.length)return;const frozen=new Map([...players].map(([t,p])=>[t,{...p}])),updates=new Map(teams.map(t=>[t,[]])),tsUpdates=new Map(teams.map(t=>[t,{delta:0,factor:1}])),drawP=clamp((draws+2)/(prior+200),.001,.04);let weekDraws=0;for(const x of pending){const a=frozen.get(x.home),b=frozen.get(x.away),aa=(kind==="elo"||kind==="movda")?{rating:elos.get(x.home),rd:150}:a,bb=(kind==="elo"||kind==="movda")?{rating:elos.get(x.away),rd:150}:b,p=(kind==="elo"||kind==="movda")?probs(aa,bb,drawP,true):kind==="trueskill"?trueSkillProbs(aa,bb,drawP):probs(aa,bb,drawP),y=x.hs>x.as?1:x.hs<x.as?0:.5;score(m,p,y,x.season>=(opts.scoreFromSeason??-Infinity)&&x.season<=(opts.scoreToSeason??Infinity));if(y===.5)weekDraws++;if(kind==="elo"||kind==="movda"){const hr=elos.get(x.home),ar=elos.get(x.away),e=1/(1+Math.pow(10,(ar-hr)/400)),base=CFG.eloK*(y-e),expectedMargin=kind==="movda"?opts.movdaConfig.alpha*Math.tanh((hr-ar)/opts.movdaConfig.beta)+opts.movdaConfig.homeAdv:0,movda=kind==="movda"?(opts.movdaLambda??.1)*(x.hs-x.as-expectedMargin):0,ch=base+movda;updates.get(x.home).push(ch);updates.get(x.away).push(-ch)}else if(kind==="trueskill"){const ev=trueSkillEvidence(a,b,y,drawP),ua=tsUpdates.get(x.home),ub=tsUpdates.get(x.away);ua.delta+=ev.da;ua.factor*=ev.fa;ub.delta+=ev.db;ub.factor*=ev.fb}else{const fc=opts.formulaConfig||{},isFormula=kind.startsWith("formula-"),homeDiff=a.rating-b.rating,expectedMargin=(opts.movdaConfig?opts.movdaConfig.alpha*Math.tanh(homeDiff/opts.movdaConfig.beta)+opts.movdaConfig.homeAdv:14*Math.tanh(homeDiff/250)),signedMargin=x.hs-x.as,residual=signedMargin-expectedMargin,absMargin=Math.abs(signedMargin);let w=kind==="custom"?weight(x.margin,x.hs>x.as?a.rating:b.rating,x.hs>x.as?b.rating:a.rating,c,opts.weightConfig||{}):1,extra=0;if(isFormula){const id=kind.slice(8),p1=fc.p1??.2,p2=fc.p2??1,p3=fc.p3??10,p4=fc.p4??3,clip=(v,lim)=>Math.max(-lim,Math.min(lim,v)),sigmoid=v=>1/(1+Math.exp(-clip(v,-30,30))),norm=absMargin/10;switch(id){case"power":w=1+p1*Math.pow(norm,p2);break;case"tanh":w=1+p1*Math.tanh(absMargin/p3);break;case"sqrt":w=1+p1*Math.min(Math.sqrt(norm),p2);break;case"linearcap":w=1+p1*Math.min(norm/p3,1);break;case"expsat":w=1+p1*(1-Math.exp(-absMargin/p3));break;case"logcap":w=1+p1*Math.log1p(Math.min(absMargin,p3))/Math.log1p(p3);break;case"surprise":{const observedProb=y===1?p.win:y===.5?p.draw:p.loss;w=1+p1*(1-observedProb);break;}case"upsetmargin":{const observedProb=y===1?p.win:y===.5?p.draw:p.loss;w=1+p1*Math.min(norm/p3,1)*(1-observedProb);break;}case"underdog":{const observedProb=y===1?p.win:y===.5?p.draw:p.loss;w=1+p1*(y===.5?0:1-observedProb);break;}case"additive":extra=p1*clip(residual/p3,-p4,p4);break;case"logistic":w=1+p1*sigmoid((absMargin-p2)/p3);break;case"robust":extra=p1*clip(residual/p3,-p4,p4);break;case"uncertainty":w=1+p1*Math.min(1,(a.rd+b.rd)/700)*Math.tanh(absMargin/p3);break;case"volatility":w=1+p1*Math.min(1,(a.volatility+b.volatility)/.24)*Math.tanh(absMargin/p3);break;case"hybrid1":extra=p1*Math.tanh(residual/p3);break;case"hybrid2":w=1+p1*Math.min(1,(a.rd+b.rd)/700)*Math.tanh(absMargin/p3);break;case"hybrid3":extra=p1*clip(residual/p3,-p4,p4);break;case"hybrid4":extra=p1*Math.min(1,700/(a.rd+b.rd+1))*Math.tanh(residual/p3);break;case"ordinal":{const edges=[-Infinity,-14,-7,0,7,14,Infinity],observed=signedMargin,idx=edges.findIndex((v,i)=>i<edges.length-1&&observed>=v&&observed<edges[i+1]),lo=edges[Math.max(0,idx)],hi=edges[Math.min(edges.length-1,idx+1)],scale=Math.max(3,p3),zlo=(lo-expectedMargin)/scale,zhi=(hi-expectedMargin)/scale,prob=Math.max(1e-9,normalCDF(zhi)-normalCDF(zlo)),grad=((Number.isFinite(lo)?normalPDF(zlo):0)-(Number.isFinite(hi)?normalPDF(zhi):0))/(scale*prob);extra=p1*clip(grad*scale,-p4,p4);break;}}w=clip(w,.25,5)}updates.get(x.home).push({op:b,score:y,w,extra});updates.get(x.away).push({op:a,score:1-y,w,extra:-extra})}}if(kind==="elo"||kind==="movda"){for(const[t,v]of updates)if(v.length)elos.set(t,elos.get(t)+v.reduce((a,b)=>a+b,0))}else if(kind==="trueskill"){for(const[t,u]of tsUpdates)if(u.factor!==1||u.delta!==0){const p=frozen.get(t);players.set(t,{rating:p.rating+u.delta,rd:Math.max(1,p.rd*u.factor),volatility:p.volatility})}}else for(const t of teams)players.set(t,update(frozen.get(t),updates.get(t),drawP,kind==="custom"||kind.startsWith("formula-")));prior+=pending.length;draws+=weekDraws;pending=[]}
-for(const x of games){if(lastSeason!==null&&x.season!==lastSeason){flush();const sc=opts.seasonConfig||{},retention=clamp(sc.retention??1,0,1),rdIncrease=Math.max(0,sc.rdIncrease??0),resetVolatility=!!sc.resetVolatility;for(const[t,p]of players)players.set(t,{rating:CFG.center+retention*(p.rating-CFG.center),rd:Math.min(CFG.maxRD,Math.sqrt(p.rd*p.rd+rdIncrease*rdIncrease)),volatility:resetVolatility?CFG.sigma:p.volatility});for(const[t,r]of elos)elos.set(t,CFG.center+retention*(r-CFG.center));key=null}lastSeason=x.season;const k=x.season+"-"+x.week;if(key!==null&&k!==key)flush();key=k;pending.push(x)}flush();return{metrics:{brier:m.brier/m.n,logLoss:m.loss/m.n,accuracy:m.correct/m.n,n:m.n,calibration:m.bins.filter(b=>b.n).map(b=>({range:String(Math.floor(b.p/b.n*10)*10)+"–"+String(Math.min(100,Math.floor(b.p/b.n*10)*10+10))+"%",predicted:b.p/b.n,actual:b.y/b.n,n:b.n}))},counters:c}}
-function official(){const p={rating:1000,rd:200,volatility:.06},rs=[{op:{rating:900,rd:30,volatility:.06},score:1,w:1},{op:{rating:1050,rd:100,volatility:.06},score:0,w:1},{op:{rating:1200,rd:300,volatility:.06},score:0,w:1}],r=update(p,rs,0,false);return{rating:Math.abs(r.rating-964.06),rd:Math.abs(r.rd-151.52),sigma:Math.abs(r.volatility-.059996)}}
-function tests(games){const out=[],add=(name,ok,detail)=>out.push({name,ok,detail}),o=official(),a={rating:1100,rd:80,volatility:.06},b={rating:900,rd:80,volatility:.06},pa=probs(a,b,.01),pb=probs(b,a,.01),ta=trueSkillProbs(a,b,.01),tb=trueSkillProbs(b,a,.01),te=trueSkillEvidence(a,b,1,.01),c={denominatorGuards:0,weightClamps:0},ws=[0,1,3,7,14,28].map(x=>weight(x,1000,1000,c));add("Official Glicko-2 worked example",o.rating<.02&&o.rd<.02&&o.sigma<.00002,"rating Δ "+o.rating.toExponential(2)+", RD Δ "+o.rd.toExponential(2)+", σ Δ "+o.sigma.toExponential(2));add("Probabilities sum to one",Math.abs(pa.win+pa.draw+pa.loss-1)<1e-12,String(pa.win+pa.draw+pa.loss));add("Home/away symmetry",Math.abs(pa.win-pb.loss)<1e-12&&Math.abs(pa.loss-pb.win)<1e-12,"Swap teams; win/loss probabilities swap.");add("TrueSkill probabilities normalize",Math.abs(ta.win+ta.draw+ta.loss-1)<1e-8&&Math.abs(ta.win-tb.loss)<1e-6,"Win/draw/loss sum to one and swap symmetrically.");add("TrueSkill update direction and uncertainty",te.da>0&&te.db<0&&te.fa<1&&te.fb<1&&Math.abs(te.da+te.db)<1e-6,"A win raises the winner mean, lowers the loser mean, and reduces uncertainty.");add("Custom weights finite",ws.every(Number.isFinite)&&ws.every(x=>x>=0&&x<=3),ws.map(x=>x.toFixed(3)).join(", "));const guard={denominatorGuards:0,weightClamps:0};const guarded=weight(20,1000,4000,guard);add("Rating-gap denominator guard",guard.denominatorGuards===1&&guarded>=0&&guarded<=3,"Extreme rating gap handled; weight="+guarded.toFixed(3));add("Data chronological",games.every((x,i)=>i===0||games[i-1].season<x.season||(games[i-1].season===x.season&&(String(games[i-1].week).localeCompare(String(x.week),undefined,{numeric:true})<0||(String(games[i-1].week)===String(x.week)&&games[i-1].date<=x.date)))),games.length.toLocaleString()+" games sorted by season/week/date.");add("Both home and away wins present",games.some(x=>x.hs>x.as)&&games.some(x=>x.hs<x.as),"Checks both outcome directions.");add("Completed games and valid seasons",games.every(x=>x.hs>=0&&x.as>=0&&Number.isFinite(x.season)),"Checks completed scores and season range.");return out}
-const fmt=(x,n=4)=>Number.isFinite(x)?x.toFixed(n):"n/a";
-function render(rs,ts,games,c){const tb=$("nflTestsBody");tb.innerHTML="";for(const t of ts){const tr=document.createElement("tr");tr.className=t.ok?"nfl-test-pass":"nfl-test-fail";[t.ok?"PASS":"FAIL",t.name,t.detail].forEach(v=>{const td=document.createElement("td");td.textContent=v;tr.appendChild(td)});tb.appendChild(tr)}const rb=$("nflResultsBody");rb.innerHTML="";for(const r of rs){const tr=document.createElement("tr");[r.label,fmt(r.metrics.brier,6),fmt(r.metrics.logLoss,6),fmt(r.metrics.accuracy*100,1)+"%",r.metrics.n.toLocaleString()].forEach((v,i)=>{const td=document.createElement("td");td.textContent=v;if(i===0)td.style.textAlign="left";tr.appendChild(td)});rb.appendChild(tr)}const s=rs.find(x=>x.key==="custom").metrics,b=rs.find(x=>x.key==="glicko").metrics;$("nflVerdict").textContent=s.brier<b.brier&&s.logLoss<b.logLoss?"Custom weighting beat standard Glicko-2 on both Brier score and log loss in this replay. Evidence for this dataset, not proof of universal superiority.":s.brier>b.brier&&s.logLoss>b.logLoss?"Custom weighting was worse than standard Glicko-2 on both Brier score and log loss in this replay.":"Results are mixed. Compare both proper scoring metrics and calibration; accuracy alone is not enough.";$("nflMeta").textContent=games.length.toLocaleString()+" completed games · "+games[0].season+"–"+games[games.length-1].season+" · "+new Set(games.flatMap(x=>[x.home,x.away])).size+" teams · source: "+loadedDataLabel;$("nflGuardMeta").textContent="Custom formula guards: "+c.denominatorGuards+" denominator floors; "+c.weightClamps+" weight clamps. Predictions are made before each week's results update ratings.";$("nflStatus").textContent="Completed: "+ts.filter(x=>x.ok).length+"/"+ts.length+" tests passed.";const cb=$("nflCalibrationBody");cb.innerHTML="";for(const x of s.calibration){const tr=document.createElement("tr");[x.range,fmt(x.predicted*100,1)+"%",fmt(x.actual*100,1)+"%",x.n.toLocaleString()].forEach(v=>{const td=document.createElement("td");td.textContent=v;tr.appendChild(td)});cb.appendChild(tr)}}
-let loadedGames=null,loadedDataLabel="NFLverse historical NFL regular-season games";
-function parseCustomCSV(s){const rows=csvRows(s);if(rows.length<2)throw Error("CSV has no game rows.");const norm=x=>x.trim().toLowerCase().replace(/[\s-]+/g,"_");const h=rows.shift().map(norm),ix=Object.fromEntries(h.map((x,i)=>[x,i]));const find=(...keys)=>keys.find(k=>ix[k]!==undefined);const sk=find("season","year","season_year"),wk=find("week","round","matchweek"),dk=find("date","gameday","game_date","match_date"),hk=find("home_team","home","host","team_home"),ak=find("away_team","away","visitor","team_away"),hsk=find("home_score","score_home","home_points","home_goals"),ask=find("away_score","score_away","away_points","away_goals"),tk=find("game_type","type","season_type");if(!hk||!ak||!hsk||!ask)throw Error("CSV needs home_team, away_team, home_score and away_score columns (aliases are accepted).");const out=[];for(const r of rows){const get=k=>k===undefined?"":(r[ix[k]]||"").trim();const home=get(hk),away=get(ak),hsText=get(hsk),asText=get(ask),hs=Number(hsText),as=Number(asText),date=get(dk)||"";if(!home||!away||hsText===""||asText===""||!Number.isFinite(hs)||!Number.isFinite(as))continue;const type=get(tk).toUpperCase();if(type&&!/^(REG|REGULAR|REGULAR_SEASON|LEAGUE|ROUND_ROBIN)$/.test(type))continue;const season=Number(get(sk))||(date?Number(date.slice(0,4)):2000),week=Number(get(wk))||date||String(out.length+1);out.push({season,week:String(week),date:date||String(out.length+1).padStart(6,"0"),home,away,hs,as,margin:Math.abs(hs-as)})}if(out.length<100)throw Error("Only "+out.length+" valid games found. Check the CSV columns and make sure it contains at least 100 completed matches.");return out.sort((a,b)=>a.season-b.season||String(a.week).localeCompare(String(b.week),undefined,{numeric:true})||a.date.localeCompare(b.date))}
-async function loadGames(){if(loadedGames)return loadedGames;const res=await fetch(CFG.url,{cache:"no-store"});if(!res.ok)throw Error("Data source HTTP "+res.status);loadedGames=parse(await res.text());loadedDataLabel="NFLverse historical NFL regular-season games";return loadedGames}
-async function runHistoricalNFLTest(){if(busy)return;busy=true;const btn=$("runNFLBtn");btn.disabled=true;$("nflStatus").textContent="Loading historical results…";try{const games=await loadGames();if(games.length<(loadedDataLabel.startsWith("NFLverse")?1000:100))throw Error("Only "+games.length+" games parsed; check the data source or CSV format.");$("nflStatus").textContent="Replaying "+games.length.toLocaleString()+" games and running tests…";await new Promise(r=>setTimeout(r,0));const ts=tests(games),rs=[{key:"glicko",label:"Standard Glicko-2",...run(games,"glicko")},{key:"custom",label:"Custom margin-weighted Glicko-2",...run(games,"custom")},{key:"trueskill",label:"TrueSkill-inspired team baseline (outcome-only)",...run(games,"trueskill")},{key:"elo",label:"Elo benchmark (K=20)",...run(games,"elo")},{key:"movda",label:"MOVDA-inspired Elo (train-fitted; full-history score)",...run(games,"movda",{movdaConfig:fitMOVDA(games,seasonSplit(games).validationFrom),movdaLambda:.1})}];render(rs,ts,games,rs.find(x=>x.key==="custom").counters);if(ts.some(x=>!x.ok))$("nflStatus").textContent+=" Review failed tests."}catch(e){console.error(e);$("nflStatus").textContent="Test failed: "+e.message}finally{busy=false;btn.disabled=false}}
+function parseGames(csv) {
+  return parseCSV(csv).map(r => {
+    const season = Number(r.season), week = Number(r.week);
+    const hs = Number(r.home_score), as = Number(r.away_score);
+    return {
+      season, week, home: r.home_team, away: r.away_team, hs, as,
+      date: r.gameday || r.game_date || "",
+      gameType: r.game_type || "",
+      scoresPresent: r.home_score !== "" && r.away_score !== ""
+    };
+  }).filter(g =>
+    g.scoresPresent && Number.isFinite(g.season) && g.season >= 1999 && g.season <= LAST_COMPLETE_SEASON &&
+    g.gameType === "REG" && Number.isFinite(g.week) && g.home && g.away &&
+    Number.isFinite(g.hs) && Number.isFinite(g.as)
+  ).sort((a, b) => a.season - b.season || a.week - b.week || a.date.localeCompare(b.date) || a.home.localeCompare(b.home));
+}
 
-function seasonSplit(games){const seasons=[...new Set(games.map(x=>x.season))].sort((a,b)=>a-b);if(seasons.length<5)throw Error("Need at least five seasons to tune and test constants fairly.");const testIndex=Math.max(2,Math.floor(seasons.length*.8)),validationIndex=Math.max(1,Math.floor(seasons.length*.6));return{validationFrom:seasons[validationIndex],validationTo:seasons[testIndex-1],testFrom:seasons[testIndex],testTo:seasons[seasons.length-1]}}
-function objective(m,base){return .5*(m.brier/base.brier+m.logLoss/base.logLoss)}
-function appendSweepRow(tbody,cells,cls=""){const tr=document.createElement("tr");if(cls)tr.className=cls;for(const v of cells){const td=document.createElement("td");td.textContent=String(v);tr.appendChild(td)}tbody.appendChild(tr)}
-const FORMULA_FAMILIES=[
-{key:"custom-current",name:"Current custom Glicko baseline",kind:"custom",grid:[{marginScale:2.2,denominatorBase:2.2,gapSensitivity:.001,maxWeight:3}]},
-{key:"custom-optimised",name:"Optimised custom Glicko contender",kind:"custom",grid:[{marginScale:2.2,denominatorBase:2.6,gapSensitivity:0,maxWeight:4},{marginScale:1.6,denominatorBase:1.8,gapSensitivity:0,maxWeight:4}]},
-{key:"glicko",name:"Standard Glicko-2",kind:"glicko",grid:[{}]},
-{key:"elo",name:"Elo K=20",kind:"elo",grid:[{}]},
-{key:"trueskill",name:"TrueSkill-inspired team baseline",kind:"trueskill",grid:[{}]},
-{key:"movda",name:"MOVDA-inspired Elo",kind:"movda",grid:[{movdaLambda:0},{movdaLambda:.1},{movdaLambda:.2},{movdaLambda:.5}]},
-{key:"power",name:"V1 Power-law margin weighting",kind:"formula-power",grid:[{p1:.05,p2:.5},{p1:.1,p2:.5},{p1:.2,p2:1},{p1:.4,p2:1.5},{p1:.6,p2:2}]},
-{key:"sqrt",name:"V9 Square-root margin weighting",kind:"formula-sqrt",grid:[{p1:.1,p2:1},{p1:.2,p2:1.5},{p1:.35,p2:2},{p1:.5,p2:3}]},
-{key:"linearcap",name:"V10 Capped linear margin weighting",kind:"formula-linearcap",grid:[{p1:.1,p3:10},{p1:.2,p3:14},{p1:.35,p3:21},{p1:.5,p3:28}]},
-{key:"expsat",name:"V11 Exponential saturation weighting",kind:"formula-expsat",grid:[{p1:.15,p3:5},{p1:.3,p3:10},{p1:.5,p3:14},{p1:.75,p3:21}]},
-{key:"logcap",name:"V12 Normalised capped-log weighting",kind:"formula-logcap",grid:[{p1:.15,p3:7},{p1:.3,p3:14},{p1:.5,p3:21},{p1:.75,p3:28}]},
-{key:"surprise",name:"V13 Outcome-surprise weighting",kind:"formula-surprise",grid:[{p1:.1},{p1:.25},{p1:.5},{p1:.75},{p1:1}]},
-{key:"upsetmargin",name:"V14 Upset × margin weighting",kind:"formula-upsetmargin",grid:[{p1:.25,p3:1},{p1:.5,p3:1},{p1:.75,p3:2},{p1:1,p3:3}]},
-{key:"underdog",name:"V15 Underdog-result weighting",kind:"formula-underdog",grid:[{p1:.1},{p1:.25},{p1:.5},{p1:.75},{p1:1}]},
-{key:"tanh",name:"V2 Bounded multiplicative surprise",kind:"formula-tanh",grid:[{p1:.1,p3:5},{p1:.25,p3:5},{p1:.5,p3:10},{p1:.75,p3:15},{p1:1,p3:20}]},
-{key:"additive",name:"V3 Additive margin residual",kind:"formula-additive",grid:[{p1:.025,p3:8,p4:1},{p1:.05,p3:10,p4:2},{p1:.1,p3:14,p4:2},{p1:.15,p3:18,p4:3},{p1:.2,p3:20,p4:3}]},
-{key:"logistic",name:"V4 Logistic margin weighting",kind:"formula-logistic",grid:[{p1:.15,p2:5,p3:3},{p1:.25,p2:7,p3:3},{p1:.5,p2:10,p3:5},{p1:.75,p2:12,p3:6},{p1:1,p2:14,p3:7}]},
-{key:"robust",name:"V5 Robust clipped residual",kind:"formula-robust",grid:[{p1:.025,p3:8,p4:1},{p1:.05,p3:10,p4:1},{p1:.1,p3:14,p4:2},{p1:.15,p3:18,p4:2},{p1:.2,p3:20,p4:3}]},
-{key:"uncertainty",name:"V6 Uncertainty-adaptive update",kind:"formula-uncertainty",grid:[{p1:.1,p3:5},{p1:.25,p3:8},{p1:.5,p3:12},{p1:.75,p3:15},{p1:1,p3:18}]},
-{key:"volatility",name:"V7 Volatility-adaptive update",kind:"formula-volatility",grid:[{p1:.1,p3:5},{p1:.25,p3:8},{p1:.5,p3:12},{p1:.75,p3:15},{p1:1,p3:18}]},
-{key:"ordinal",name:"V8 Margin-category likelihood update",kind:"formula-ordinal",grid:[{p1:.005,p3:5,p4:2},{p1:.01,p3:7,p4:2},{p1:.02,p3:8,p4:3},{p1:.03,p3:10,p4:3},{p1:.06,p3:14,p4:4}]},
-{key:"hybrid1",name:"H1 Glicko + margin residual",kind:"formula-hybrid1",grid:[{p1:.025,p3:8},{p1:.05,p3:10},{p1:.1,p3:14},{p1:.15,p3:18},{p1:.2,p3:20}]},
-{key:"hybrid2",name:"H2 Uncertainty-weighted margin",kind:"formula-hybrid2",grid:[{p1:.25,p3:8},{p1:.5,p3:12},{p1:1,p3:18}]},
-{key:"hybrid3",name:"H3 Outcome + MOVDA residual",kind:"formula-hybrid3",grid:[{p1:.025,p3:8,p4:1},{p1:.05,p3:10,p4:2},{p1:.1,p3:14,p4:2},{p1:.15,p3:18,p4:3},{p1:.2,p3:20,p4:3}]},
-{key:"hybrid4",name:"H4 Reliability-weighted residual",kind:"formula-hybrid4",grid:[{p1:.05,p3:10},{p1:.1,p3:14},{p1:.2,p3:20}]}
-];
-async function runFormulaBakeoff(){if(busy)return;busy=true;const btn=$("runFormulaBtn"),status=$("formulaStatus"),body=$("formulaResultsBody");btn.disabled=true;body.innerHTML="";try{const games=await loadGames(),split=seasonSplit(games);if(split.testFrom===undefined||!Number.isFinite(split.testFrom))throw Error("Could not create chronological validation/test split.");status.textContent="Selecting a shared season policy on validation seasons…";await new Promise(r=>setTimeout(r,0));const baseCfg={marginScale:2.2,denominatorBase:2.2,gapSensitivity:.001,maxWeight:3},policyGrid=[];for(const retention of [0,.25,.5,.75,1])for(const rdIncrease of [0,50,100,150])for(const resetVolatility of [false,true])policyGrid.push({retention,rdIncrease,resetVolatility});const noSeasonVal=run(games,"custom",{weightConfig:baseCfg,scoreFromSeason:split.validationFrom,scoreToSeason:split.validationTo}).metrics;let policy={retention:1,rdIncrease:0,resetVolatility:false},policyObjective=Infinity;for(const candidate of policyGrid){const metrics=run(games,"custom",{weightConfig:baseCfg,seasonConfig:candidate,scoreFromSeason:split.validationFrom,scoreToSeason:split.validationTo}).metrics,obj=objective(metrics,noSeasonVal);if(obj<policyObjective){policyObjective=obj;policy=candidate}}const movdaConfig=fitMOVDA(games,split.validationFrom,policy),rows=[];for(const family of FORMULA_FAMILIES){let candidates=family.grid.map(config=>{const opts={seasonConfig:policy,scoreFromSeason:split.validationFrom,scoreToSeason:split.validationTo};if(family.kind==="custom")opts.weightConfig=config;else if(family.kind==="movda"){opts.movdaConfig=movdaConfig;opts.movdaLambda=config.movdaLambda}else if(family.kind.startsWith("formula-")){opts.formulaConfig=config}const metrics=run(games,family.kind,opts).metrics;return{family,config,validation:metrics,objective:metrics.brier+metrics.logLoss}});candidates.sort((a,b)=>a.objective-b.objective);const best=candidates[0];rows.push(best);status.textContent="Calibrating formula families: "+rows.length+"/"+FORMULA_FAMILIES.length+" · "+family.name;await new Promise(r=>setTimeout(r,0))}const incumbent=rows.find(x=>x.family.key==="custom-optimised"),bestPolicy=policy;status.textContent="Running untouched final-test replay for every family…";await new Promise(r=>setTimeout(r,0));const testRows=[];for(let i=0;i<rows.length;i++){const x=rows[i],opts={seasonConfig:bestPolicy,scoreFromSeason:split.testFrom};if(x.family.kind==="custom")opts.weightConfig=x.config;else if(x.family.kind==="movda"){opts.movdaConfig=movdaConfig;opts.movdaLambda=x.config.movdaLambda}else if(x.family.kind.startsWith("formula-")){opts.formulaConfig=x.config}const test=run(games,x.family.kind,opts).metrics;testRows.push({...x,test});status.textContent="Final test: "+(i+1)+"/"+rows.length;await new Promise(r=>setTimeout(r,0))}testRows.sort((a,b)=>a.validation.objective-b.validation.objective);for(let i=0;i<testRows.length;i++){const x=testRows[i],tr=document.createElement("tr");const vals=[i+1,x.family.name,JSON.stringify(x.config),fmt(x.validation.brier,6),fmt(x.validation.logLoss,6),fmt(x.test.brier,6),fmt(x.test.logLoss,6),fmt(x.test.accuracy*100,1)+"%",x.test.n.toLocaleString()];for(const v of vals){const td=document.createElement("td");td.textContent=String(v);tr.appendChild(td)}if(x.family.key==="custom-current"||x.family.key==="custom-optimised")tr.className="baseline-row";if(i===0)tr.className="best-row";body.appendChild(tr)}const winner=testRows.slice().sort((a,b)=>(a.test.brier+a.test.logLoss)-(b.test.brier+b.test.logLoss))[0],inc=testRows.find(x=>x.family.key==="custom-optimised"),wins=winner.test.brier<inc.test.brier&&winner.test.logLoss<inc.test.logLoss;status.textContent="Completed "+testRows.length+" model families. Parameter selection used validation seasons only.";const v=$("formulaVerdict");v.textContent="Validation-selected leader: "+testRows[0].family.name+". Lowest combined final-test Brier + log loss: "+winner.family.name+". The final-test winner "+(wins?"beats":"does not beat")+" the optimised custom Glicko incumbent on both proper scoring metrics. Do not promote a winner from one test window alone.";const meta=$("formulaMeta");meta.textContent=games.length.toLocaleString()+" matches · validation "+split.validationFrom+"–"+split.validationTo+" · untouched final test from "+split.testFrom+" · margin curve trained before validation. Formula parameters: "+testRows.length+" families tested; each family selected from its listed grid using validation Brier + log loss."}catch(e){console.error(e);status.textContent="Bake-off failed: "+e.message}finally{busy=false;btn.disabled=false}}
+function splitSeasons(data) {
+  const seasons = [...new Set(data.map(g => g.season))].sort((a, b) => a - b);
+  if (seasons.length < 8) throw new Error("The NFL dataset contains too few complete seasons for a chronological comparison.");
+  const validationStart = Math.floor(seasons.length * 0.60);
+  const testStart = Math.floor(seasons.length * 0.80);
+  return {
+    seasons,
+    warmup: new Set(seasons.slice(0, validationStart)),
+    validation: new Set(seasons.slice(validationStart, testStart)),
+    test: new Set(seasons.slice(testStart))
+  };
+}
 
-async function runConstantSweep(){if(busy)return;busy=true;const btn=$("runSweepBtn");btn.disabled=true;const status=$("sweepStatus"),body=$("sweepResultsBody");body.innerHTML="";try{const games=await loadGames(),split=seasonSplit(games);status.textContent="Selecting season-boundary policy on validation seasons…";await new Promise(r=>setTimeout(r,0));const baseCfg={marginScale:2.2,denominatorBase:2.2,gapSensitivity:.001,maxWeight:3};const policyGrid=[];for(const retention of [0,.25,.5,.75,1])for(const rdIncrease of [0,50,100,150])for(const resetVolatility of [false,true])policyGrid.push({retention,rdIncrease,resetVolatility});const noSeasonVal=run(games,"custom",{weightConfig:baseCfg,scoreFromSeason:split.validationFrom,scoreToSeason:split.validationTo}).metrics;let bestPolicy={retention:1,rdIncrease:0,resetVolatility:false},bestPolicyObjective=Infinity;for(let i=0;i<policyGrid.length;i++){const policy=policyGrid[i],metrics=run(games,"custom",{weightConfig:baseCfg,seasonConfig:policy,scoreFromSeason:split.validationFrom,scoreToSeason:split.validationTo}).metrics,obj=objective(metrics,noSeasonVal);if(obj<bestPolicyObjective){bestPolicyObjective=obj;bestPolicy=policy}if((i+1)%5===0){status.textContent="Testing season policies: "+(i+1)+"/"+policyGrid.length;await new Promise(r=>setTimeout(r,0))}}const configs=[];for(const marginScale of [1.6,2.2,2.8])for(const denominatorBase of [1.8,2.2,2.6])for(const gapSensitivity of [0,.0005,.001,.0015])for(const maxWeight of [2,3,4])configs.push({marginScale,denominatorBase,gapSensitivity,maxWeight});let bestConfig=baseCfg;for(let pass=0;pass<2;pass++){const baseVal=run(games,"custom",{weightConfig:bestConfig,seasonConfig:bestPolicy,scoreFromSeason:split.validationFrom,scoreToSeason:split.validationTo}).metrics,candidates=[];for(let i=0;i<configs.length;i++){const config=configs[i],metrics=run(games,"custom",{weightConfig:config,seasonConfig:bestPolicy,scoreFromSeason:split.validationFrom,scoreToSeason:split.validationTo}).metrics;candidates.push({config,validation:metrics,objective:objective(metrics,baseVal)});if((i+1)%9===0){status.textContent="Tuning margin constants, pass "+(pass+1)+"/2: "+(i+1)+"/"+configs.length;await new Promise(r=>setTimeout(r,0))}}candidates.sort((a,b)=>a.objective-b.objective);bestConfig=candidates[0].config;if(pass===0){const selectedMarginVal=candidates[0].validation;let revisedPolicy=bestPolicy,revisedObjective=objective(selectedMarginVal,noSeasonVal);for(let i=0;i<policyGrid.length;i++){const policy=policyGrid[i],metrics=run(games,"custom",{weightConfig:bestConfig,seasonConfig:policy,scoreFromSeason:split.validationFrom,scoreToSeason:split.validationTo}).metrics,obj=objective(metrics,noSeasonVal);if(obj<revisedObjective){revisedObjective=obj;revisedPolicy=policy}if((i+1)%5===0){status.textContent="Rechecking season policy with tuned margin formula: "+(i+1)+"/"+policyGrid.length;await new Promise(r=>setTimeout(r,0))}}bestPolicy=revisedPolicy}}const baselineVal=run(games,"custom",{weightConfig:baseCfg,seasonConfig:bestPolicy,scoreFromSeason:split.validationFrom,scoreToSeason:split.validationTo}).metrics,standardVal=run(games,"glicko",{seasonConfig:bestPolicy,scoreFromSeason:split.validationFrom,scoreToSeason:split.validationTo}).metrics,candidates=configs.map(config=>({config,validation:run(games,"custom",{weightConfig:config,seasonConfig:bestPolicy,scoreFromSeason:split.validationFrom,scoreToSeason:split.validationTo}).metrics}));for(const x of candidates)x.objective=objective(x.validation,baselineVal);candidates.sort((a,b)=>a.objective-b.objective);const finalists=candidates.slice(0,10);status.textContent="Evaluating shortlisted settings on untouched final seasons…";await new Promise(r=>setTimeout(r,0));const movdaConfig=fitMOVDA(games,split.validationFrom,bestPolicy),movdaLambdas=[0,.02,.05,.1,.2,.35,.5],movdaCandidates=movdaLambdas.map(lambda=>({lambda,validation:run(games,"movda",{movdaConfig,movdaLambda:lambda,seasonConfig:bestPolicy,scoreFromSeason:split.validationFrom,scoreToSeason:split.validationTo}).metrics}));for(const x of movdaCandidates)x.objective=objective(x.validation,baselineVal);movdaCandidates.sort((a,b)=>a.objective-b.objective);const bestMOVDA=movdaCandidates[0],baselineTest=run(games,"custom",{weightConfig:baseCfg,seasonConfig:bestPolicy,scoreFromSeason:split.testFrom}).metrics,standardTest=run(games,"glicko",{seasonConfig:bestPolicy,scoreFromSeason:split.testFrom}).metrics,trueSkillVal=run(games,"trueskill",{scoreFromSeason:split.validationFrom,scoreToSeason:split.validationTo}).metrics,trueSkillTest=run(games,"trueskill",{scoreFromSeason:split.testFrom}).metrics,movdaVal=bestMOVDA.validation,movdaTest=run(games,"movda",{movdaConfig,movdaLambda:bestMOVDA.lambda,seasonConfig:bestPolicy,scoreFromSeason:split.testFrom}).metrics,finalRows=[];for(const x of finalists){const test=run(games,"custom",{weightConfig:x.config,seasonConfig:bestPolicy,scoreFromSeason:split.testFrom}).metrics;finalRows.push({...x,test})}const tb=$("sweepResultsBody");appendSweepRow(tb,["Current formula + selected season policy",baseCfg.marginScale,baseCfg.denominatorBase,baseCfg.gapSensitivity,baseCfg.maxWeight,fmt(baselineVal.brier,6),fmt(baselineVal.logLoss,6),fmt(baselineTest.brier,6),fmt(baselineTest.logLoss,6),fmt(baselineTest.accuracy*100,1)+"%"],"baseline-row");appendSweepRow(tb,["Standard Glicko-2 + same policy","—","—","—","—",fmt(standardVal.brier,6),fmt(standardVal.logLoss,6),fmt(standardTest.brier,6),fmt(standardTest.logLoss,6),fmt(standardTest.accuracy*100,1)+"%"],"baseline-row");appendSweepRow(tb,["TrueSkill-inspired team baseline","—","—","—","—",fmt(trueSkillVal.brier,6),fmt(trueSkillVal.logLoss,6),fmt(trueSkillTest.brier,6),fmt(trueSkillTest.logLoss,6),fmt(trueSkillTest.accuracy*100,1)+"%"],"baseline-row");appendSweepRow(tb,["MOVDA-inspired Elo (λ="+bestMOVDA.lambda+")",movdaConfig.alpha,movdaConfig.beta,movdaConfig.homeAdv,bestMOVDA.lambda,fmt(movdaVal.brier,6),fmt(movdaVal.logLoss,6),fmt(movdaTest.brier,6),fmt(movdaTest.logLoss,6),fmt(movdaTest.accuracy*100,1)+"%"],"baseline-row");finalRows.forEach((x,i)=>appendSweepRow(tb,[i+1,x.config.marginScale,x.config.denominatorBase,x.config.gapSensitivity,x.config.maxWeight,fmt(x.validation.brier,6),fmt(x.validation.logLoss,6),fmt(x.test.brier,6),fmt(x.test.logLoss,6),fmt(x.test.accuracy*100,1)+"%"],i===0?"best-row":""));const best=finalRows[0],beats=best.test.brier<baselineTest.brier&&best.test.logLoss<baselineTest.logLoss,policyText="Season policy selected on validation: retain "+Math.round(bestPolicy.retention*100)+"% of rating distance from 1000; add "+bestPolicy.rdIncrease+" RD points in quadrature; "+(bestPolicy.resetVolatility?"reset volatility to baseline":"retain volatility")+".",statusText="Finished "+configs.length+" margin settings with "+policyGrid.length+" season policies; selection used validation seasons only.";status.textContent=statusText;const verdict=$("sweepVerdict");const movdaBeats=movdaTest.brier<baselineTest.brier&&movdaTest.logLoss<baselineTest.logLoss;verdict.textContent=policyText+" Best custom candidate: scale "+best.config.marginScale+", base "+best.config.denominatorBase+", gap sensitivity "+best.config.gapSensitivity+", cap "+best.config.maxWeight+"; on untouched test seasons it "+(beats?"beat":"did not beat")+" the current formula on both Brier and log loss. MOVDA fit on "+movdaConfig.trainingGames+" training games (α="+movdaConfig.alpha+", β="+movdaConfig.beta+", home advantage="+movdaConfig.homeAdv+") and selected λ="+bestMOVDA.lambda+" using validation only. Its untouched-test Brier/log loss: "+fmt(movdaTest.brier,6)+" / "+fmt(movdaTest.logLoss,6)+"; it "+(movdaBeats?"beat":"did not beat")+" the current formula on both metrics. Results are evidence for this dataset, not universal rankings.";const detail=$("sweepMeta");detail.textContent=games.length.toLocaleString()+" games · "+new Set(games.flatMap(x=>[x.home,x.away])).size+" teams · "+split.validationFrom+"–"+split.validationTo+" validation · "+split.testFrom+"–"+split.testTo+" final test · "+loadedDataLabel+" · "+policyText;}catch(e){console.error(e);status.textContent="Sweep failed: "+e.message}finally{busy=false;btn.disabled=false}}
-const dataFile=$("customDataFile");if(dataFile)dataFile.addEventListener("change",async()=>{const file=dataFile.files&&dataFile.files[0];if(!file)return;const status=$("nflStatus");try{const text=await file.text(),games=parseCustomCSV(text);loadedGames=games;loadedDataLabel="uploaded file: "+file.name;status.textContent="Loaded "+games.length.toLocaleString()+" games from "+file.name;const meta=$("nflMeta");if(meta)meta.textContent=games.length.toLocaleString()+" completed games · "+games[0].season+"–"+games[games.length-1].season+" · "+new Set(games.flatMap(x=>[x.home,x.away])).size+" teams · "+loadedDataLabel;}catch(e){loadedGames=null;status.textContent="CSV load failed: "+e.message}});
-if($("runSweepBtn"))$("runSweepBtn").addEventListener("click",runConstantSweep);if($("runFormulaBtn"))$("runFormulaBtn").addEventListener("click",runFormulaBakeoff);
+function makeTeams(data) {
+  return [...new Set(data.flatMap(g => [g.home, g.away]))].sort();
+}
+function freshGlicko() { return { rating: CENTER, rd: 350, sigma: 0.06 }; }
+function freshStats() {
+  return { homePF: 0, homePA: 0, homeN: 0, awayPF: 0, awayPA: 0, awayN: 0, neutralMarginSum: 0, marginN: 0 };
+}
+function mu(ratingValue) { return (ratingValue - CENTER) / SCALE; }
+function phi(rd) { return rd / SCALE; }
+function rating(m) { return CENTER + SCALE * m; }
+function g(phiValue) { return 1 / Math.sqrt(1 + 3 * phiValue * phiValue / (Math.PI * Math.PI)); }
 
+function drawRate(history) {
+  return clamp((history.draws + 0.5) / (history.games + 50), 0.002, 0.08);
+}
+function threeWayFromHomeWin(pHomeGivenNoDraw, pDraw) {
+  const p = clamp(pHomeGivenNoDraw, 0.0001, 0.9999), d = clamp(pDraw, 0.002, 0.08);
+  return { home: (1 - d) * p, draw: d, away: (1 - d) * (1 - p) };
+}
+function resultClass(game) { return game.hs > game.as ? "home" : game.hs < game.as ? "away" : "draw"; }
+
+function poissonPMF(k, lambda) {
+  let p = Math.exp(-lambda);
+  for (let i = 1; i <= k; i++) p *= lambda / i;
+  return p;
+}
+function poissonOutcome(lambdaHome, lambdaAway) {
+  const maxScore = 60;
+  const hp = Array.from({ length: maxScore + 1 }, (_, k) => poissonPMF(k, lambdaHome));
+  const ap = Array.from({ length: maxScore + 1 }, (_, k) => poissonPMF(k, lambdaAway));
+  let home = 0, draw = 0, away = 0;
+  for (let h = 0; h <= maxScore; h++) {
+    for (let a = 0; a <= maxScore; a++) {
+      const p = hp[h] * ap[a];
+      if (h > a) home += p;
+      else if (h === a) draw += p;
+      else away += p;
+    }
+  }
+  const total = home + draw + away;
+  return { home: home / total, draw: draw / total, away: away / total };
+}
+
+function glickoForecast(home, away, pDraw) {
+  const p = logistic(g(phi(away.rd)) * (mu(home.rating + 35) - mu(away.rating)));
+  return threeWayFromHomeWin(p, pDraw);
+}
+function eloForecast(homeRating, awayRating, pDraw) {
+  return threeWayFromHomeWin(1 / (1 + Math.pow(10, (awayRating - (homeRating + 55)) / 400)), pDraw);
+}
+
+function updateGlickoPeriod(states, periodGames) {
+  const frozen = new Map([...states].map(([team, s]) => [team, { ...s }]));
+  const byTeam = new Map([...states.keys()].map(team => [team, []]));
+  for (const game of periodGames) {
+    byTeam.get(game.home).push({ opponent: game.away, score: game.hs > game.as ? 1 : game.hs < game.as ? 0 : 0.5 });
+    byTeam.get(game.away).push({ opponent: game.home, score: game.as > game.hs ? 1 : game.as < game.hs ? 0 : 0.5 });
+  }
+  for (const [team, old] of frozen) {
+    const results = byTeam.get(team);
+    const oldMu = mu(old.rating), oldPhi = phi(old.rd);
+    if (!results.length) {
+      const agedPhi = Math.sqrt(oldPhi * oldPhi + old.sigma * old.sigma);
+      states.set(team, { ...old, rd: Math.min(350, SCALE * agedPhi) });
+      continue;
+    }
+    let varianceInv = 0, scoreSum = 0;
+    for (const result of results) {
+      const opp = frozen.get(result.opponent);
+      const oppMu = mu(opp.rating), oppPhi = phi(opp.rd);
+      const gj = g(oppPhi), expected = logistic(gj * (oldMu - oppMu));
+      varianceInv += gj * gj * expected * (1 - expected);
+      scoreSum += gj * (result.score - expected);
+    }
+    if (!(varianceInv > 0)) continue;
+    const v = 1 / varianceInv, delta = v * scoreSum, a = Math.log(old.sigma * old.sigma);
+    const f = x => {
+      const ex = Math.exp(x), denom = oldPhi * oldPhi + v + ex;
+      return ex * (delta * delta - oldPhi * oldPhi - v - ex) / (2 * denom * denom) - (x - a) / (TAU * TAU);
+    };
+    let A = a, B;
+    if (delta * delta > oldPhi * oldPhi + v) B = Math.log(delta * delta - oldPhi * oldPhi - v);
+    else {
+      let k = 1;
+      while (f(a - k * TAU) < 0 && k < 100) k++;
+      B = a - k * TAU;
+    }
+    let fA = f(A), fB = f(B);
+    for (let i = 0; i < 100 && Math.abs(B - A) > EPS; i++) {
+      const denominator = fB - fA;
+      if (Math.abs(denominator) < 1e-15) break;
+      const C = A + (A - B) * fA / denominator, fC = f(C);
+      if (!Number.isFinite(fC)) break;
+      if (fC * fB < 0) { A = B; fA = fB; }
+      else fA /= 2;
+      B = C; fB = fC;
+    }
+    const newSigma = Math.exp(A / 2);
+    const phiStar = Math.sqrt(oldPhi * oldPhi + newSigma * newSigma);
+    const newPhi = 1 / Math.sqrt(1 / (phiStar * phiStar) + 1 / v);
+    const newMu = oldMu + newPhi * newPhi * scoreSum;
+    states.set(team, { rating: rating(newMu), rd: Math.min(350, SCALE * newPhi), sigma: newSigma });
+  }
+}
+
+function evaluate(records, splitName) {
+  const subset = records.filter(r => r.split === splitName);
+  if (!subset.length) return { games: 0, brier: NaN, logLoss: NaN, accuracy: NaN };
+  let brier = 0, logLoss = 0, correct = 0;
+  for (const r of subset) {
+    const actual = r.actual;
+    const target = { home: actual === "home" ? 1 : 0, draw: actual === "draw" ? 1 : 0, away: actual === "away" ? 1 : 0 };
+    brier += (r.p.home - target.home) ** 2 + (r.p.draw - target.draw) ** 2 + (r.p.away - target.away) ** 2;
+    logLoss -= Math.log(Math.max(1e-12, r.p[actual]));
+    const predicted = Object.entries(r.p).sort((a, b) => b[1] - a[1])[0][0];
+    if (predicted === actual) correct++;
+  }
+  return { games: subset.length, brier: brier / subset.length, logLoss: logLoss / subset.length, accuracy: correct / subset.length };
+}
+function fmt(value, digits = 4) { return Number.isFinite(value) ? value.toFixed(digits) : "—"; }
+
+function runExperiment(data) {
+  const split = splitSeasons(data), teams = makeTeams(data);
+  const glicko = new Map(teams.map(t => [t, freshGlicko()]));
+  const elo = new Map(teams.map(t => [t, CENTER]));
+  const stats = new Map(teams.map(t => [t, freshStats()]));
+  const history = { games: 0, draws: 0, homeWins: 0, awayWins: 0, homeScoreSum: 0, awayScoreSum: 0, homeMarginSum: 0 };
+  const records = [];
+  let lastSeason = null;
+  for (let i = 0; i < data.length;) {
+    const first = data[i], period = [];
+    while (i < data.length && data[i].season === first.season && data[i].week === first.week) period.push(data[i++]);
+    if (lastSeason !== null && first.season !== lastSeason) {
+      for (const [team, r] of glicko) glicko.set(team, { ...r, rd: Math.min(350, Math.sqrt(r.rd * r.rd + 50 * 50)) });
+      for (const [team, r] of elo) elo.set(team, CENTER + 0.95 * (r - CENTER));
+    }
+    lastSeason = first.season;
+    const splitName = split.validation.has(first.season) ? "validation" : split.test.has(first.season) ? "test" : "warmup";
+    const dRate = drawRate(history);
+    const leagueHomeMean = (history.homeScoreSum + 8 * 22.5) / (history.games + 8);
+    const leagueAwayMean = (history.awayScoreSum + 8 * 21.5) / (history.games + 8);
+    const homeAdv = history.games ? history.homeMarginSum / history.games : 2.5;
+    for (const game of period) {
+      const gh = glicko.get(game.home), ga = glicko.get(game.away);
+      const eh = elo.get(game.home), ea = elo.get(game.away);
+      const sh = stats.get(game.home), sa = stats.get(game.away);
+      const shrink = 8;
+      const homeOff = (sh.homePF + shrink * leagueHomeMean) / (sh.homeN + shrink);
+      const awayDef = (sa.awayPA + shrink * leagueHomeMean) / (sa.awayN + shrink);
+      const awayOff = (sa.awayPF + shrink * leagueAwayMean) / (sa.awayN + shrink);
+      const homeDef = (sh.homePA + shrink * leagueAwayMean) / (sh.homeN + shrink);
+      const lambdaHome = clamp((homeOff + awayDef) / 2, 3, 50);
+      const lambdaAway = clamp((awayOff + homeDef) / 2, 3, 50);
+      const homeStrength = sh.marginN ? sh.neutralMarginSum / (sh.marginN + 5) : 0;
+      const awayStrength = sa.marginN ? sa.neutralMarginSum / (sa.marginN + 5) : 0;
+      const expectedMargin = homeStrength - awayStrength + (Number.isFinite(homeAdv) ? homeAdv : 2.5);
+      const pMargin = logistic(expectedMargin / 6.5);
+      const baselineHome = (history.homeWins + 28.5) / (history.homeWins + history.awayWins + 50);
+      const p = {
+        "Glicko-2": glickoForecast(gh, ga, dRate),
+        "Elo": eloForecast(eh, ea, dRate),
+        "Poisson scores": poissonOutcome(lambdaHome, lambdaAway),
+        "Points differential": threeWayFromHomeWin(pMargin, dRate),
+        "Home-rate baseline": threeWayFromHomeWin(baselineHome, dRate)
+      };
+      if (splitName !== "warmup") {
+        for (const name of MODEL_NAMES) records.push({ model: name, split: splitName, p: p[name], actual: resultClass(game), season: game.season, week: game.week });
+      }
+    }
+    // Update only after every game in this week has been forecast.
+    updateGlickoPeriod(glicko, period);
+    const frozenElo = new Map(elo);
+    const eloDeltas = new Map(teams.map(t => [t, 0]));
+    for (const game of period) {
+      const expected = 1 / (1 + Math.pow(10, ((frozenElo.get(game.away) - frozenElo.get(game.home) - 55) / 400)));
+      const actual = game.hs > game.as ? 1 : game.hs < game.as ? 0 : 0.5;
+      const change = 20 * (actual - expected);
+      eloDeltas.set(game.home, eloDeltas.get(game.home) + change);
+      eloDeltas.set(game.away, eloDeltas.get(game.away) - change);
+    }
+    for (const team of teams) elo.set(team, frozenElo.get(team) + eloDeltas.get(team));
+    for (const game of period) {
+      const sh = stats.get(game.home), sa = stats.get(game.away);
+      sh.homePF += game.hs; sh.homePA += game.as; sh.homeN++;
+      sa.awayPF += game.as; sa.awayPA += game.hs; sa.awayN++;
+      sh.neutralMarginSum += game.hs - game.as - 2.5; sh.marginN++;
+      sa.neutralMarginSum += game.as - game.hs + 2.5; sa.marginN++;
+      history.games++;
+      history.homeScoreSum += game.hs; history.awayScoreSum += game.as;
+      history.homeMarginSum += game.hs - game.as;
+      if (game.hs > game.as) history.homeWins++;
+      else if (game.hs < game.as) history.awayWins++;
+      else history.draws++;
+    }
+  }
+  const result = {};
+  for (const name of MODEL_NAMES) {
+    result[name] = {
+      validation: evaluate(records.filter(r => r.model === name), "validation"),
+      test: evaluate(records.filter(r => r.model === name), "test")
+    };
+  }
+  return { result, records, split, data };
+}
+
+function renderResults(output) {
+  const tbody = $("resultsBody");
+  const rows = MODEL_NAMES.map(name => ({ name, ...output.result[name] }));
+  rows.sort((a, b) => a.test.logLoss - b.test.logLoss);
+  const best = rows[0]?.name;
+  tbody.innerHTML = rows.map(r => `<tr class="${r.name === best ? "best" : ""}">
+    <td>${r.name}</td>
+    <td>${fmt(r.validation.brier)}</td><td>${fmt(r.validation.logLoss)}</td><td>${fmt(r.validation.accuracy * 100, 1)}%</td>
+    <td>${fmt(r.test.brier)}</td><td>${fmt(r.test.logLoss)}</td><td>${fmt(r.test.accuracy * 100, 1)}%</td><td>${r.test.games.toLocaleString()}</td>
+  </tr>`).join("");
+  const v = output.result[best];
+  $("verdict").textContent = `Lowest final-test log loss in this run: ${best} (log loss ${fmt(v.test.logLoss)}, Brier ${fmt(v.test.brier)}, accuracy ${fmt(v.test.accuracy * 100, 1)}%). This is a result for the held-out seasons, not proof that the method is universally best.`;
+  const select = $("calibrationModel");
+  select.innerHTML = MODEL_NAMES.map(name => `<option value="${name}">${name}</option>`).join("");
+  select.disabled = false;
+  select.value = best;
+  lastResultRows = output.records;
+  renderCalibration();
+}
+
+function renderCalibration() {
+  const name = $("calibrationModel").value;
+  const rows = lastResultRows.filter(r => r.model === name && r.split === "test");
+  if (!rows.length) {
+    $("calibrationBody").innerHTML = '<tr><td colspan="4" class="empty">No final-test predictions available.</td></tr>';
+    return;
+  }
+  const bins = Array.from({ length: 5 }, (_, i) => ({ lo: i * 0.2, hi: (i + 1) * 0.2, sum: 0, wins: 0, n: 0 }));
+  for (const r of rows) {
+    const bin = bins[Math.min(4, Math.floor(r.p.home / 0.2))];
+    bin.sum += r.p.home; bin.wins += r.actual === "home" ? 1 : 0; bin.n++;
+  }
+  $("calibrationBody").innerHTML = bins.filter(b => b.n).map(b => `<tr><td>${b.lo.toFixed(1)}–${b.hi.toFixed(1)}</td><td>${(b.sum / b.n).toFixed(3)}</td><td>${(b.wins / b.n).toFixed(3)}</td><td>${b.n}</td></tr>`).join("");
+}
+
+async function loadData() {
+  $("status").textContent = "LOADING DATA";
+  $("progressText").textContent = "Fetching the public nflverse game-results CSV…";
+  try {
+    const response = await fetch(DATA_URL, { cache: "no-store" });
+    if (!response.ok) throw new Error(`Data request failed (HTTP ${response.status}).`);
+    games = parseGames(await response.text());
+    if (!games.length) throw new Error("The data loaded, but no completed regular-season games were recognised.");
+    const split = splitSeasons(games);
+    $("gamesMetric").textContent = games.length.toLocaleString();
+    $("seasonsMetric").textContent = `${split.seasons[0]}–${split.seasons.at(-1)} · ${split.seasons.length} seasons`;
+    $("validationMetric").textContent = `${Math.min(...split.validation)}–${Math.max(...split.validation)}`;
+    $("testMetric").textContent = `${Math.min(...split.test)}–${Math.max(...split.test)}`;
+    $("status").textContent = "DATA READY";
+    $("runBtn").disabled = false;
+    $("progressText").textContent = "Historical scores loaded. Ready to run the comparison.";
+    $("resultsBody").innerHTML = '<tr><td colspan="8" class="empty">Data loaded. Run the backtest to calculate predictions.</td></tr>';
+  } catch (error) {
+    $("status").textContent = "DATA ERROR";
+    $("progressText").textContent = error.message;
+    $("resultsBody").innerHTML = `<tr><td colspan="8" class="empty">${error.message} Check the data source link below and reload.</td></tr>`;
+    $("dataWarning").textContent = "The live dataset could not be fetched by this browser session. No synthetic NFL results are substituted.";
+  }
+}
+
+async function runBacktest() {
+  if (busy || !games.length) return;
+  busy = true;
+  $("runBtn").disabled = true;
+  $("runStatus").textContent = "RUNNING";
+  $("progressText").textContent = "Replaying seasons chronologically. Every week is forecast before its results are applied.";
+  try {
+    await new Promise(resolve => requestAnimationFrame(resolve));
+    const output = runExperiment(games);
+    renderResults(output);
+    $("runStatus").textContent = "COMPLETE";
+    $("progressText").textContent = `Compared ${MODEL_NAMES.length} methods across ${output.result[MODEL_NAMES[0]].test.games.toLocaleString()} final-test games.`;
+  } catch (error) {
+    $("runStatus").textContent = "ERROR";
+    $("progressText").textContent = error.message;
+    $("verdict").textContent = "The backtest stopped before producing a valid comparison. See the status message and reload after correcting the issue.";
+    console.error(error);
+  } finally {
+    busy = false;
+    $("runBtn").disabled = false;
+  }
+}
+
+$("runBtn").addEventListener("click", runBacktest);
+$("calibrationModel").addEventListener("change", renderCalibration);
+loadData();

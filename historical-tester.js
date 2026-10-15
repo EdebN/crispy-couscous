@@ -377,6 +377,13 @@ function evaluate(records, splitName) {
   return { games: subset.length, brier: brier / subset.length, logLoss: logLoss / subset.length, accuracy: correct / subset.length };
 }
 function fmt(value, digits = 4) { return Number.isFinite(value) ? value.toFixed(digits) : "—"; }
+function wilsonInterval(successes, total, z = 1.96) {
+  if (!total) return [NaN, NaN];
+  const p = successes / total, z2 = z * z, denominator = 1 + z2 / total;
+  const center = (p + z2 / (2 * total)) / denominator;
+  const half = z * Math.sqrt(p * (1 - p) / total + z2 / (4 * total * total)) / denominator;
+  return [Math.max(0, center - half), Math.min(1, center + half)];
+}
 
 function temperatureScale(p, temperature) {
   const logits = ["home", "draw", "away"].map(key => Math.log(Math.max(1e-12, p[key])) / temperature);
@@ -627,7 +634,10 @@ function renderCalibration() {
     const bin = bins[Math.min(4, Math.floor(r.p.home / 0.2))];
     bin.sum += r.p.home; bin.wins += r.actual === "home" ? 1 : 0; bin.n++;
   }
-  $("calibrationBody").innerHTML = bins.filter(b => b.n).map(b => `<tr><td>${b.lo.toFixed(1)}–${b.hi.toFixed(1)}</td><td>${(b.sum / b.n).toFixed(3)}</td><td>${(b.wins / b.n).toFixed(3)}</td><td>${b.n}</td></tr>`).join("");
+  $("calibrationBody").innerHTML = bins.filter(b => b.n).map(b => {
+    const [lo, hi] = wilsonInterval(b.wins, b.n);
+    return `<tr><td>${b.lo.toFixed(1)}–${b.hi.toFixed(1)}</td><td>${(b.sum / b.n).toFixed(3)}</td><td>${(b.wins / b.n).toFixed(3)}</td><td>${lo.toFixed(3)}–${hi.toFixed(3)}</td><td>${b.n}</td></tr>`;
+  }).join("");
 }
 
 async function loadData() {

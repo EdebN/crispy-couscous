@@ -7,7 +7,7 @@ const CENTER = 1500;
 const SCALE = 173.7178;
 const TAU = 0.5;
 const EPS = 1e-6;
-const MODEL_NAMES = ["Glicko-2", "Elo", "Poisson scores", "Points differential", "Home-rate baseline"];
+const MODEL_NAMES = ["Glicko-2", "Glicko-2 + recent form", "Elo", "Poisson scores", "Points differential", "Home-rate baseline"];
 const $ = id => document.getElementById(id);
 const clamp = (x, lo, hi) => Math.max(lo, Math.min(hi, x));
 const logistic = x => x >= 0 ? 1 / (1 + Math.exp(-x)) : Math.exp(x) / (1 + Math.exp(x));
@@ -73,6 +73,16 @@ function freshGlicko() { return { rating: CENTER, rd: 350, sigma: 0.06 }; }
 function freshStats() {
   return { homePF: 0, homePA: 0, homeN: 0, awayPF: 0, awayPA: 0, awayN: 0, neutralMarginSum: 0, marginN: 0 };
 }
+function recentForm(history) {
+  let weighted = 0, weights = 0;
+  for (let i = history.length - 1, age = 0; i >= 0; i--, age++) {
+    const w = Math.pow(0.78, age);
+    weighted += history[i] * w;
+    weights += w;
+  }
+  const mean = weights ? weighted / weights : 0;
+  return mean * history.length / (history.length + 4);
+}
 function mu(ratingValue) { return (ratingValue - CENTER) / SCALE; }
 function phi(rd) { return rd / SCALE; }
 function rating(m) { return CENTER + SCALE * m; }
@@ -111,6 +121,11 @@ function poissonOutcome(lambdaHome, lambdaAway) {
 
 function glickoForecast(home, away, pDraw) {
   const p = logistic(g(phi(away.rd)) * (mu(home.rating + 35) - mu(away.rating)));
+  return threeWayFromHomeWin(p, pDraw);
+}
+function recentFormGlickoForecast(home, away, pDraw, homeForm, awayForm) {
+  const formAdjustment = clamp((homeForm - awayForm) * 12, -75, 75);
+  const p = logistic(g(phi(away.rd)) * (mu(home.rating + 35 + formAdjustment) - mu(away.rating)));
   return threeWayFromHomeWin(p, pDraw);
 }
 function eloForecast(homeRating, awayRating, pDraw) {
@@ -192,6 +207,7 @@ function runExperiment(data) {
   const glicko = new Map(teams.map(t => [t, freshGlicko()]));
   const elo = new Map(teams.map(t => [t, CENTER]));
   const stats = new Map(teams.map(t => [t, freshStats()]));
+  const recentMargins = new Map(teams.map(t => [t, []]));
   const history = { games: 0, draws: 0, homeWins: 0, awayWins: 0, homeScoreSum: 0, awayScoreSum: 0, homeMarginSum: 0 };
   const records = [];
   let lastSeason = null;
@@ -226,6 +242,7 @@ function runExperiment(data) {
       const baselineHome = (history.homeWins + 28.5) / (history.homeWins + history.awayWins + 50);
       const p = {
         "Glicko-2": glickoForecast(gh, ga, dRate),
+        "Glicko-2 + recent form": recentFormGlickoForecast(gh, ga, dRate, recentForm(recentMargins.get(game.home)), recentForm(recentMargins.get(game.away))),
         "Elo": eloForecast(eh, ea, dRate),
         "Poisson scores": poissonOutcome(lambdaHome, lambdaAway),
         "Points differential": threeWayFromHomeWin(pMargin, dRate),
@@ -253,6 +270,11 @@ function runExperiment(data) {
       sa.awayPF += game.as; sa.awayPA += game.hs; sa.awayN++;
       sh.neutralMarginSum += game.hs - game.as - 2.5; sh.marginN++;
       sa.neutralMarginSum += game.as - game.hs + 2.5; sa.marginN++;
+      const homeRecent = recentMargins.get(game.home), awayRecent = recentMargins.get(game.away);
+      homeRecent.push(game.hs - game.as - 2.5);
+      awayRecent.push(game.as - game.hs + 2.5);
+      if (homeRecent.length > 12) homeRecent.shift();
+      if (awayRecent.length > 12) awayRecent.shift();
       history.games++;
       history.homeScoreSum += game.hs; history.awayScoreSum += game.as;
       history.homeMarginSum += game.hs - game.as;

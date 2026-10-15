@@ -396,3 +396,20 @@ footer {
     flex-direction: column;
   }
 }
+
+/* Historical backtest result states */
+.nfl-test-pass td:first-child {
+  color: var(--green);
+  font-weight: 700;
+}
+.nfl-test-fail td:first-child {
+  color: #ff9b9b;
+  font-weight: 700;
+}
+#historicalNFL h3 {
+  margin: 26px 0 10px;
+  font-size: 14px;
+}
+#historicalNFL .table-wrap {
+  margin-top: 16px;
+}

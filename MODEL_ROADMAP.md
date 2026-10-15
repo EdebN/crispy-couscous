@@ -8,16 +8,20 @@ The model must forecast each game using only information available before that g
 
 ## Current system
 
-The current browser-based lab (historical-tester.js) downloads the public nflverse games CSV and evaluates six baselines:
+The current browser-based lab (historical-tester.js) downloads the public nflverse games CSV and evaluates these candidates:
 
 - Glicko-2
 - Glicko-2 + recent form
 - Elo
 - Poisson scores
+- Dynamic offence/defence
 - Points differential
 - Home-rate baseline
+- Neural network
 
-The current implementation already groups predictions by season/week and applies results after the full week's predictions have been generated. It divides complete seasons chronologically into 60% warm-up, 20% validation, and 20% final test. Temperature scaling is fitted on validation predictions and evaluated on test predictions.
+Each base model also has a temperature-calibrated test variant, with the temperature fitted on validation predictions only. Predictions are grouped by season/week and results are applied after the full week's forecasts have been generated. Complete seasons are split chronologically into 60% warm-up, 20% validation, and 20% final test.
+
+The dynamic offence/defence candidate is an initial, deliberately simple Phase 2 prototype. It maintains bounded log-scale team offence and defence states, updates them from capped pregame score residuals after each week, and regresses states 30% toward league average between seasons. It uses the independent-Poisson scoreline engine, so it tests whether evolving team states add value beyond the static historical score-average model. It does not yet model state uncertainty or use a fully estimated probabilistic score likelihood.
 
 Keep these baselines and their definitions available throughout development. Do not silently change an existing baseline when adding a new model.
 

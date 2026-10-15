@@ -20,13 +20,13 @@
   <main>
     <section class="intro-grid">
       <article class="metric-card"><span class="metric-label">DATASET</span><strong id="gamesMetric">—</strong><span class="metric-note" id="seasonsMetric">Regular-season games</span></article>
-      <article class="metric-card"><span class="metric-label">VALIDATION WINDOW</span><strong id="validationMetric">—</strong><span class="metric-note">Used for comparison, not tuning</span></article>
+      <article class="metric-card"><span class="metric-label">VALIDATION WINDOW</span><strong id="validationMetric">—</strong><span class="metric-note">Used for model selection and tuning</span></article>
       <article class="metric-card"><span class="metric-label">FINAL TEST WINDOW</span><strong id="testMetric">—</strong><span class="metric-note">Chronologically held out</span></article>
     </section>
 
     <section class="panel">
       <div class="section-heading">
-        <div><h2>Model comparison</h2><p>Every game is predicted before its week's results update any model. Includes a restrained recent-form signal, without a parameter sweep or equation optimisation.</p></div>
+        <div><h2>Model comparison</h2><p>Every game is predicted before its week's results update any model. Models are selected using validation log loss; final-test results are held out for confirmation.</p></div>
         <span class="status" id="runStatus">READY</span>
       </div>
       <div class="model-grid">
@@ -44,7 +44,7 @@
           <tbody id="resultsBody"><tr><td colspan="8" class="empty">Waiting for NFL data.</td></tr></tbody>
         </table>
       </div>
-      <p class="verdict" id="verdict">The models will be compared on the same held-out games. Lower Brier score and log loss indicate better probability forecasts.</p>
+      <p class="verdict" id="verdict">The highlighted model is selected by validation log loss only. Final-test metrics are reported as held-out confirmation, never used to choose the winner.</p>
       <p class="warning" id="dataWarning">Data and results are loaded from the public nflverse game-results dataset. Betting lines and market odds are not used.</p>
     </section>
 
@@ -75,13 +75,14 @@
         <li><strong>Recent form:</strong> the form-adjusted Glicko model uses each team’s latest 12 neutralised scoring margins, with older games down-weighted and short histories shrunk toward zero. Its adjustment is capped to prevent a few unusual scores from overpowering the rating.</li>
         <li><strong>Poisson caveat:</strong> NFL scoring is discrete and shaped by touchdowns, field goals, and conversions. The Poisson model is a useful benchmark, not an assumption that football scores literally follow a Poisson process.</li>
         <li><strong>Probability calibration experiment:</strong> each base model also gets a temperature-scaled variant. A single temperature is selected by minimising multiclass log loss on validation predictions only, then frozen and evaluated on the final test window. Calibrated variants show blank validation scores because those same validation outcomes fitted the temperature; presenting them as independent validation results would be misleading.</li>
-        <li><strong>No test leakage:</strong> final-test outcomes are not used to fit temperatures or alter model settings. Results are evidence for these seasons and methods, not a guarantee about future games.</li>
+        <li><strong>No test leakage:</strong> model selection and temperature fitting use validation data only. Final-test outcomes are reported for the frozen candidates and must not be used to choose the winner or tune later versions. Results are evidence for these seasons and methods, not a guarantee about future games.</li>
+        <li><strong>Data checks:</strong> the run stops if game fields are invalid, a game is duplicated within a season/week, or any model produces an invalid three-way probability vector.</li>
       </ul>
       <p class="source-line">Data: <a href="https://github.com/nflverse/nfldata" target="_blank" rel="noreferrer">nflverse/nfldata</a> · <a href="https://github.com/nflverse/nflverse-data" target="_blank" rel="noreferrer">nflverse data releases</a></p>
     </section>
   </main>
 
   <footer><span>NFL PREDICTION RESEARCH</span><span>Historical analysis only · no live ratings changed</span></footer>
-  <script type="module" src="./historical-tester.js?v=nfl-prediction-lab-2"></script>
+  <script type="module" src="./historical-tester.js?v=nfl-prediction-lab-3"></script>
 </body>
 </html>

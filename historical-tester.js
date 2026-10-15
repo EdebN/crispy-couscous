@@ -334,6 +334,7 @@ function runExperiment(data) {
   const recentMargins = new Map(teams.map(t => [t, []]));
   const history = { games: 0, draws: 0, homeWins: 0, awayWins: 0, homeScoreSum: 0, awayScoreSum: 0, homeMarginSum: 0 };
   const records = [];
+  const neuralRows = [];
   let lastSeason = null;
   for (let i = 0; i < data.length;) {
     const first = data[i], period = [];

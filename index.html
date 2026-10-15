@@ -13,187 +13,13 @@
       <p class="eyebrow">COMPETITION DASHBOARD / RESEARCH</p>
       <h1>Rating Lab<span class="accent">.</span></h1>
       <p class="subtitle">
-        Historical validation, margin-weight tuning, and rating-model comparison
+        Chronological backtesting, baseline comparisons, and custom rating research
       </p>
     </div>
     <span class="status" id="status">READY</span>
   </header>
 
   <main>
-    <section class="panel">
-      <div class="section-heading">
-        <div>
-          <h2>Experiment configuration</h2>
-          <p>Screen 1,056 combinations on shared simulations, then test finalists on separate unseen competitions.</p>
-        </div>
-      </div>
-
-      <div class="controls">
-        <label>
-          Search seeds
-          <select id="seeds">
-            <option value="4">4 · Quick test</option>
-            <option value="8" selected>8 · Standard</option>
-            <option value="16">16 · More reliable</option>
-            <option value="32">32 · Extensive</option>
-          </select>
-        </label>
-
-        <label>
-          Simulated seasons
-          <select id="seasons">
-            <option value="4">4</option>
-            <option value="8">8</option>
-            <option value="12" selected>12</option>
-            <option value="20">20</option>
-          </select>
-        </label>
-
-        <label>
-          Teams
-          <select id="teams">
-            <option value="6">6</option>
-            <option value="8">8</option>
-            <option value="12" selected>12</option>
-            <option value="16">16</option>
-            <option value="24">24</option>
-          </select>
-        </label>
-
-        <label>
-          Matches per team / season
-          <select id="matches">
-            <option value="8">8</option>
-            <option value="12">12</option>
-            <option value="18" selected>18</option>
-            <option value="24">24</option>
-            <option value="36">36</option>
-          </select>
-        </label>
-      </div>
-
-      <div class="button-row">
-        <button id="runBtn" class="primary">Run parameter sweep</button>
-        <button id="resetBtn" class="secondary">Reset settings</button>
-      </div>
-
-      <div class="progress-wrap">
-        <div class="progress-label">
-          <span id="progressText">Waiting to start</span>
-          <span id="progressPercent">0%</span>
-        </div>
-        <div class="progress-track">
-          <div id="progressBar" class="progress-bar"></div>
-        </div>
-      </div>
-    </section>
-
-    <section class="metrics-grid">
-      <article class="metric-card">
-        <span class="metric-label">Candidates tested</span>
-        <strong id="candidateCount">0</strong>
-        <span class="metric-note">1,056 combinations in full sweep</span>
-      </article>
-
-      <article class="metric-card">
-        <span class="metric-label">Best holdout Brier</span>
-        <strong id="bestBrier">—</strong>
-        <span class="metric-note">Lower is better</span>
-      </article>
-
-      <article class="metric-card">
-        <span class="metric-label">Best holdout rank</span>
-        <strong id="bestRank">—</strong>
-        <span class="metric-note">Higher is better</span>
-      </article>
-
-      <article class="metric-card">
-        <span class="metric-label">Holdout baseline Brier</span>
-        <strong id="baselineBrier">—</strong>
-        <span class="metric-note">Reference performance</span>
-      </article>
-    </section>
-
-    <section class="panel">
-      <div class="section-heading">
-        <div>
-          <h2>Average formula</h2>
-          <p>Arithmetic mean of RD, volatility, and tau across candidates that pass the search accuracy guardrails.</p>
-        </div>
-      </div>
-
-      <div class="parameter-grid">
-        <div class="parameter">
-          <span>Initial RD</span>
-          <strong id="bestRD">—</strong>
-        </div>
-        <div class="parameter">
-          <span>Volatility</span>
-          <strong id="bestVolatility">—</strong>
-        </div>
-        <div class="parameter">
-          <span>Tau</span>
-          <strong id="bestTau">—</strong>
-        </div>
-        <div class="parameter">
-          <span>Mean objective</span>
-          <strong id="bestObjective">—</strong>
-        </div>
-      </div>
-
-      <p id="verdict" class="verdict">
-        Run an experiment to see the results.
-      </p>
-    </section>
-
-    <section class="panel">
-      <div class="section-heading">
-        <div>
-          <h2>Candidate rankings</h2>
-          <p>Search-set metrics are diagnostic; holdout metrics decide which candidates survive.</p>
-        </div>
-        <label class="compact-label">
-          Show
-          <select id="rowLimit">
-            <option value="10">Top 10</option>
-            <option value="20" selected>Top 20</option>
-            <option value="50">Top 50</option>
-            <option value="2000">All (1,056)</option>
-          </select>
-        </label>
-      </div>
-
-      <div class="table-wrap">
-        <table>
-          <thead>
-            <tr>
-              <th>Status</th>
-              <th>RD</th>
-              <th>Volatility</th>
-              <th>Tau</th>
-              <th>Search Brier</th>
-              <th>Search log loss</th>
-              <th>Search rank corr.</th>
-              <th>Rating swing</th>
-              <th>Volatility change</th>
-              <th>Holdout Brier</th>
-              <th>Holdout log loss</th>
-              <th>Holdout rank corr.</th>
-              <th>Seed wins</th>
-              <th>Objective (robust*)</th>
-            </tr>
-          </thead>
-          <tbody id="resultsBody">
-            <tr>
-              <td colspan="14" class="empty">
-                No results yet. Run the parameter sweep.
-              </td>
-            </tr>
-          </tbody>
-        </table>
-      </div>
-    </section>
-
     <section class="panel" id="historicalNFL">
       <div class="section-heading"><div><h2>Historical match backtest</h2><p>Replay real match results chronologically. Each period's predictions are scored before that period's ratings are updated.</p></div><span class="status" id="nflStatus">READY</span></div>
       <p id="nflMeta" class="subtitle">NFL data loads by default. Upload a CSV to test another sport or competition.</p>
@@ -220,32 +46,28 @@
     <section class="panel">
       <div class="section-heading">
         <div>
-          <h2>Experiment notes</h2>
-          <p>What the numbers mean, because tables alone are not science.</p>
+          <h2>How to read the backtest</h2>
+          <p>Use proper scoring rules first, then check accuracy and calibration.</p>
         </div>
       </div>
       <ul class="notes">
-        <li><strong>Brier score:</strong> measures the accuracy of predicted outcomes.</li>
-        <li><strong>Log loss:</strong> penalises confidently incorrect predictions.</li>
-        <li><strong>Rank correlation:</strong> measures how closely the ladder follows true simulated skill.</li>
-        <li><strong>Mean swing:</strong> measures rating movement between periods. Lower is not automatically better.</li>
-        <li><strong>Objective:</strong> 45% Brier score, 35% log loss, and 20% ranking error. On finalists, seed-to-seed variation is penalised; rating movement is reported but not blindly minimised.</li>
-        <li><strong>Robust objective:</strong> for holdout-tested finalists, the mean objective is increased by 0.25 × its across-seed standard deviation. The baseline is exactly 1.0. Untested rows show the screening objective.</li>
+        <li><strong>Brier score:</strong> evaluates probability forecasts; lower is better.</li>
+        <li><strong>Log loss:</strong> strongly penalises confident predictions that are wrong; lower is better.</li>
+        <li><strong>Outcome accuracy:</strong> the share of correctly predicted outcomes. It ignores how well-calibrated the probabilities were.</li>
+        <li><strong>Weekly frozen ratings:</strong> every match in a week is predicted before any result from that week changes ratings.</li>
+        <li><strong>Validation versus final test:</strong> tune parameters on validation seasons, then use later untouched seasons for the final comparison. Never choose a formula because it won on the final test.</li>
       </ul>
       <p class="warning">
-        Simulation results are not proof of real-world performance.
-        The broad sweep uses one set of simulations; shortlisted candidates are compared on independent holdout seeds.
-        No simulated result automatically changes the live rating system. Historical match data is still the final test.
+        Historical results are evidence for the tested competition and time period, not proof of universal superiority. Keep the live rating system unchanged until a candidate wins across multiple chronological test windows and preferably another competition.
       </p>
     </section>
   </main>
 
   <footer>
-    <span>GLICKO-2 RESEARCH TOOL</span>
-    <span>Baseline parameters remain unchanged</span>
+    <span>RATING MODEL RESEARCH</span>
+    <span>Experiments do not change live ratings</span>
   </footer>
 
-  <script type="module" src="./script.js?v=robust-holdout-2"></script>
-  <script type="module" src="./historical-tester.js?v=movda-baseline-1"></script>
+  <script type="module" src="./historical-tester.js?v=cleanup-1"></script>
 </body>
 </html>

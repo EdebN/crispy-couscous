@@ -9,7 +9,7 @@ assert.notEqual(browserStart, -1, "browser startup marker must exist");
 const core = new Function(source.slice(0, browserStart) + `
 return { runExperiment, validateGames, assertProbabilityVector, BASE_MODEL_NAMES, CALIBRATED_NAMES };
 `)();
-const { runExperiment, validateGames, assertProbabilityVector, BASE_MODEL_NAMES, CALIBRATED_NAMES } = core;
+const { runExperiment, validateGames, assertProbabilityVector, BASE_MODEL_NAMES, CALIBRATED_NAMES, ENSEMBLE_NAMES } = core;
 
 function makeFixture() {
   const teams = Array.from({ length: 16 }, (_, i) => "T" + String(i + 1).padStart(2, "0"));
@@ -73,5 +73,17 @@ test("all models complete chronological validation and test with valid probabili
   }
   for (const name of BASE_MODEL_NAMES) {
     assert.ok(output.records.some(row => row.model === name && row.split === "calibration"), name + " has a separate warm-up calibration holdout");
+  }
+
+  assert.equal(ENSEMBLE_NAMES.length, 1);
+  const ensembleName = ENSEMBLE_NAMES[0];
+  assert.ok(output.ensembleWeights[ensembleName] >= 0 && output.ensembleWeights[ensembleName] <= 1, "ensemble weight is bounded");
+  for (const splitName of ["validation", "test"]) {
+    const ensembleRows = output.records.filter(row => row.model === ensembleName && row.split === splitName);
+    assert.equal(ensembleRows.length, output.result[ensembleName][splitName].games, "ensemble " + splitName + " coverage");
+    assert.ok(Number.isFinite(output.result[ensembleName][splitName].logLoss), "ensemble " + splitName + " log loss");
+    for (const row of ensembleRows) {
+      assert.ok(Math.abs(row.p.home + row.p.draw + row.p.away - 1) < 1e-8, "ensemble probabilities sum to one");
+    }
   }
 });

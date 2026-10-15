@@ -209,7 +209,7 @@
     </section>
 
     <section class="panel" id="constantSweep">
-      <div class="section-heading"><div><h2>Margin-weight constant sweep</h2><p>Tests 108 combinations against the same real match history. Settings are ranked on earlier validation seasons, then the top 10 are evaluated on later untouched seasons.</p></div><span class="status" id="sweepStatus">READY</span></div>
+      <div class="section-heading"><div><h2>Margin-weight constant sweep</h2><p>Tests margin constants alongside 40 off-season policies. The search alternates between tuning both using validation seasons, then evaluates finalists on earlier validation seasons, then the top 10 are evaluated on later untouched seasons.</p></div><span class="status" id="sweepStatus">READY</span></div>
       <p id="sweepMeta" class="subtitle">Uses the same dataset as the historical backtest. Load a different competition CSV above to repeat the experiment on other teams.</p>
       <div class="button-row"><button id="runSweepBtn" class="primary">Sweep constants</button></div>
       <div class="table-wrap"><table><thead><tr><th>Rank / model</th><th>Margin scale</th><th>Denominator base</th><th>Gap sensitivity</th><th>Weight cap</th><th>Validation Brier</th><th>Validation log loss</th><th>Final-test Brier</th><th>Final-test log loss</th><th>Final-test accuracy</th></tr></thead><tbody id="sweepResultsBody"><tr><td colspan="10" class="empty">No sweep run yet. Run the constant sweep to compare settings.</td></tr></tbody></table></div>
@@ -246,6 +246,6 @@
   </footer>
 
   <script type="module" src="./script.js?v=robust-holdout-2"></script>
-  <script type="module" src="./historical-tester.js?v=constant-sweep-2"></script>
+  <script type="module" src="./historical-tester.js?v=season-boundary-1"></script>
 </body>
 </html>

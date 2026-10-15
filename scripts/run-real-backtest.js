@@ -10,7 +10,7 @@ const browserStart = source.indexOf('$("runBtn").addEventListener("click", runBa
 if (browserStart < 0) throw new Error("Could not locate the browser startup boundary in historical-tester.js.");
 
 const core = new Function(source.slice(0, browserStart) + `
-return { parseGames, runExperiment, BASE_MODEL_NAMES, CALIBRATED_NAMES };
+return { parseGames, runExperiment, BASE_MODEL_NAMES, CALIBRATED_NAMES, MODEL_NAMES };
 `)();
 const fmt = (value, digits = 4) => Number.isFinite(value) ? value.toFixed(digits) : "—";
 
@@ -27,22 +27,29 @@ async function main() {
   const output = core.runExperiment(games);
   const seconds = ((Date.now() - start) / 1000).toFixed(1);
   const split = output.split;
-  const selected = core.BASE_MODEL_NAMES
+  const selected = core.MODEL_NAMES
     .map(name => ({ name, ...output.result[name] }))
-    .sort((a, b) => a.validation.logLoss - b.validation.logLoss)[0];
+    .sort((a, b) => {
+      if (Math.abs(a.validation.logLoss - b.validation.logLoss) < 1e-12) {
+        const ac = a.name.endsWith(" · temperature-calibrated");
+        const bc = b.name.endsWith(" · temperature-calibrated");
+        if (ac !== bc) return ac ? 1 : -1;
+      }
+      return a.validation.logLoss - b.validation.logLoss;
+    })[0];
 
   console.log(`Seasons: ${split.seasons[0]}–${split.seasons.at(-1)} (${split.seasons.length} complete seasons)`);
-  console.log(`Warm-up: ${Math.min(...split.warmup)}–${Math.max(...split.warmup)} | Validation: ${Math.min(...split.validation)}–${Math.max(...split.validation)} | Final test: ${Math.min(...split.test)}–${Math.max(...split.test)}`);
+  console.log(`Model training: ${Math.min(...split.modelTraining)}–${Math.max(...split.modelTraining)} | Calibration holdout: ${Math.min(...split.calibration)}–${Math.max(...split.calibration)} | Validation: ${Math.min(...split.validation)}–${Math.max(...split.validation)} | Final test: ${Math.min(...split.test)}–${Math.max(...split.test)}`);
   console.log(`Backtest completed in ${seconds}s. Model selection uses validation log loss only.`);
   console.log("");
-  console.log(["Model", "Val Brier", "Val LogLoss", "Val Acc", "Test Brier", "Test LogLoss", "Test Acc", "T", "Cal Test LL"].join("\t"));
-  for (const name of core.BASE_MODEL_NAMES) {
+  console.log(["Model", "Val Brier", "Val LogLoss", "Val Acc", "Test Brier", "Test LogLoss", "Test Acc", "Temperature"].join("\t"));
+  for (const name of core.MODEL_NAMES) {
     const r = output.result[name];
-    const calibrated = output.result[name + " · temperature-calibrated"];
+    const baseName = name.replace(" · temperature-calibrated", "");
     console.log([
       name, fmt(r.validation.brier), fmt(r.validation.logLoss), fmt(r.validation.accuracy * 100, 1) + "%",
       fmt(r.test.brier), fmt(r.test.logLoss), fmt(r.test.accuracy * 100, 1) + "%",
-      fmt(calibrated.temperature, 3), fmt(calibrated.test.logLoss)
+      fmt(output.temperatures[baseName], 3)
     ].join("\t"));
   }
 
@@ -51,9 +58,9 @@ async function main() {
   console.log(`Frozen held-out test: log loss ${fmt(selected.test.logLoss)}, Brier ${fmt(selected.test.brier)}, accuracy ${fmt(selected.test.accuracy * 100, 1)}%.`);
   console.log("Do not choose a model or settings from the final-test results.");
   console.log("");
-  console.log("HOME-WIN CALIBRATION BY BASE MODEL (held-out test)");
+  console.log("HOME-WIN CALIBRATION BY MODEL (held-out test)");
   console.log(["Model", "Predicted bin", "Mean predicted", "Observed home wins", "Games"].join("\t"));
-  for (const name of core.BASE_MODEL_NAMES) {
+  for (const name of core.MODEL_NAMES) {
     const rows = output.records.filter(row => row.model === name && row.split === "test");
     const bins = Array.from({ length: 5 }, (_, i) => ({ lo: i * 0.2, hi: (i + 1) * 0.2, sum: 0, wins: 0, n: 0 }));
     for (const row of rows) {

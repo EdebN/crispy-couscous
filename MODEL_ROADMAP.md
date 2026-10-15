@@ -15,6 +15,7 @@ The current browser-based lab (historical-tester.js) downloads the public nflver
 - Elo
 - Poisson scores
 - Dynamic offence/defence
+- NFL-aware margin distribution
 - Points differential
 - Home-rate baseline
 - Neural network
@@ -22,6 +23,8 @@ The current browser-based lab (historical-tester.js) downloads the public nflver
 Each base model also has a temperature-calibrated test variant, with the temperature fitted on validation predictions only. Predictions are grouped by season/week and results are applied after the full week's forecasts have been generated. Complete seasons are split chronologically into 60% warm-up, 20% validation, and 20% final test.
 
 The dynamic offence/defence candidate is an initial, deliberately simple Phase 2 prototype. It maintains bounded log-scale team offence and defence states, updates them from capped pregame score residuals after each week, and regresses states 30% toward league average between seasons. It uses the independent-Poisson scoreline engine, so it tests whether evolving team states add value beyond the static historical score-average model. It does not yet model state uncertainty or use a fully estimated probabilistic score likelihood.
+
+The NFL-aware margin-distribution candidate reweights the independent-Poisson score grid using the discrepancy between earlier games' observed scoring margins and the margin probabilities those games' pregame Poisson forecasts assigned. The adjustment uses a 30-game prior, bounded multipliers, normalization, and one frozen margin-weight snapshot for all games in a week. It is intended to learn systematic NFL margin-shape deviations (including possible concentration around key margins) without hard-coding those effects. It remains a candidate until validation and held-out testing show a repeatable improvement.
 
 Keep these baselines and their definitions available throughout development. Do not silently change an existing baseline when adding a new model.
 

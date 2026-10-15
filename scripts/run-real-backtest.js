@@ -67,7 +67,7 @@ async function main() {
     console.log([
       name, fmt(r.validation.brier), fmt(r.validation.logLoss), fmt(r.validation.accuracy * 100, 1) + "%",
       fmt(r.test.brier), fmt(r.test.logLoss), fmt(r.test.accuracy * 100, 1) + "%",
-      fmt(output.temperatures[baseName], 3)
+      name === "Ensemble: Neural + Glicko-form" ? fmt(output.ensembleWeights[name], 2) : fmt(output.temperatures[baseName], 3)
     ].join("\t"));
   }
 

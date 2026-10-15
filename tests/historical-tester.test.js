@@ -7,7 +7,7 @@ const source = fs.readFileSync(path.join(__dirname, "..", "historical-tester.js"
 const browserStart = source.indexOf('$("runBtn").addEventListener("click", runBacktest);');
 assert.notEqual(browserStart, -1, "browser startup marker must exist");
 const core = new Function(source.slice(0, browserStart) + `
-return { runExperiment, validateGames, assertProbabilityVector, BASE_MODEL_NAMES, CALIBRATED_NAMES };
+return { runExperiment, validateGames, assertProbabilityVector, BASE_MODEL_NAMES, CALIBRATED_NAMES, ENSEMBLE_NAMES };
 `)();
 const { runExperiment, validateGames, assertProbabilityVector, BASE_MODEL_NAMES, CALIBRATED_NAMES, ENSEMBLE_NAMES } = core;
 

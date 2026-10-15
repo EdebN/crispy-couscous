@@ -20,7 +20,7 @@ The current browser-based lab (historical-tester.js) downloads the public nflver
 - Home-rate baseline
 - Neural network
 
-Each base model also has a temperature-calibrated test variant, with the temperature fitted on validation predictions only. Predictions are grouped by season/week and results are applied after the full week's forecasts have been generated. Complete seasons are split chronologically into 60% warm-up, 20% validation, and 20% final test.
+Each base model has a temperature-calibrated variant. The earliest 80% of warm-up seasons train the neural network; the later 20% of warm-up seasons form a separate calibration holdout for fitting temperatures. Both calibrated and uncalibrated candidates are evaluated on validation, and the final test remains untouched for confirmation. Predictions are grouped by season/week and results are applied after the full week's forecasts have been generated. The complete history is divided chronologically into model-training seasons, calibration-holdout seasons, validation seasons, and final-test seasons.
 
 The dynamic offence/defence candidate is an initial, deliberately simple Phase 2 prototype. It maintains bounded log-scale team offence and defence states, updates them from capped pregame score residuals after each week, and regresses states 30% toward league average between seasons. It uses the independent-Poisson scoreline engine, so it tests whether evolving team states add value beyond the static historical score-average model. It does not yet model state uncertainty or use a fully estimated probabilistic score likelihood.
 
@@ -222,7 +222,7 @@ For the joint candidate, generate a finite score grid with a validated tail limi
 The scoreline model must remain a proper probability distribution: every cell is non-negative, and the full grid plus any explicitly modelled tail mass sums to 1. Do not hard-code claims such as “15% of games finish three points apart”; estimate key-number effects from the training history and check their stability across seasons. Preserve joint dependence if evidence supports it; do not assume the two teams' scores are independent by convenience alone.
 
 ### Fourth: calibrate and combine only after the base models work
-- Compare uncalibrated and calibrated three-class probabilities using validation-only fitting.
+- Fit temperature scaling on a dedicated warm-up calibration holdout, not on validation or final-test outcomes. Compare calibrated and uncalibrated candidates on validation.
 - Investigate the low-probability home-win calibration gap by model, season, sample size, and probability range. Check for a feature/implementation bug before attempting to calibrate it away.
 - Test a small ensemble of the strongest dynamic-strength and scoreline candidates, with weights selected on validation only.
 - Use season-block resampling or rolling-origin validation to assess whether apparent gains persist across eras. Keep the final test untouched until the candidate and all settings are frozen.

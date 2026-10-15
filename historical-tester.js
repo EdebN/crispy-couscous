@@ -217,6 +217,8 @@ function runExperiment(data) {
     if (lastSeason !== null && first.season !== lastSeason) {
       for (const [team, r] of glicko) glicko.set(team, { ...r, rd: Math.min(350, Math.sqrt(r.rd * r.rd + 50 * 50)) });
       for (const [team, r] of elo) elo.set(team, CENTER + 0.95 * (r - CENTER));
+      // Recent form is season-specific; don't carry last year's short-term momentum into a new season.
+      for (const team of teams) recentMargins.set(team, []);
     }
     lastSeason = first.season;
     const splitName = split.validation.has(first.season) ? "validation" : split.test.has(first.season) ? "test" : "warmup";

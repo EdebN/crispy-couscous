@@ -18,3 +18,5 @@ jobs:
         run: node --check historical-tester.js
       - name: Run deterministic benchmark integrity tests
         run: node --test tests/historical-tester.test.js
+      - name: Run real historical NFL backtest
+        run: node scripts/run-real-backtest.js
